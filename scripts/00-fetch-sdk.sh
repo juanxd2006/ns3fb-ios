@@ -24,9 +24,27 @@ command -v ninja >/dev/null || { echo "ninja not found (brew install ninja)" >&2
 
 mkdir -p "$ROOT/thirdparty"
 
+# La cache de CI restaura thirdparty/rexglue-sdk/out pero NO el .git ni el
+# codigo fuente. En ese caso hay que clonar igualmente, pero sin perder el out/
+# cacheado: se aparta, se clona limpio y se devuelve a su sitio.
+CACHE_OUT=""
+if [ -d "$SDK" ] && [ ! -d "$SDK/.git" ]; then
+  if [ -d "$SDK/out" ]; then
+    CACHE_OUT="$(mktemp -d)/out"
+    echo "==> Cache-only SDK directory found; preserving out/ and re-cloning sources"
+    mv "$SDK/out" "$CACHE_OUT"
+  fi
+  rm -rf "$SDK"
+fi
+
 if [ ! -d "$SDK/.git" ]; then
   echo "==> Cloning rexglue-sdk"
   git clone --recursive https://github.com/rexglue/rexglue-sdk.git "$SDK"
+fi
+
+if [ -n "$CACHE_OUT" ] && [ ! -d "$SDK/out" ]; then
+  mv "$CACHE_OUT" "$SDK/out"
+  echo "==> Restored cached out/ into the fresh clone"
 fi
 
 if [ ! -f "$PATCH" ]; then
