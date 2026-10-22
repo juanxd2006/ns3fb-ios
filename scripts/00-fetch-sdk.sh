@@ -50,6 +50,24 @@ fi
 # tree and then dies with "Could not read presets", so enter the SDK first.
 cd "$SDK"
 
+# Fast path: actions/cache restored thirdparty/rexglue-sdk/out, so the host
+# tools and the iOS dylibs are already built. Skip configure+build entirely -
+# ninja judges by mtime and a restored tree would otherwise rebuild everything.
+if [ "${REXGLUE_SDK_FORCE:-0}" != "1" ] \
+   && [ -x "$SDK/out/mac-arm64/Release/rexglue" ] \
+   && [ -f "$SDK/out/ios-arm64/Release/librexruntime.dylib" ] \
+   && [ -f "$SDK/out/ios-arm64/Release/librexgpu-xenos.dylib" ] \
+   && [ -f "$SDK/out/ios-arm64/Release/libMoltenVK.dylib" ] \
+   && [ -d "$SDK/out/install/ios-arm64/lib/cmake/rexglue" ]; then
+  echo "==> Cached ReXGlue SDK found, skipping build"
+  echo "    host tools: $("$SDK/out/mac-arm64/Release/rexglue" --version 2>/dev/null | head -1)"
+  ls -1 "$SDK/out/ios-arm64/Release"/*.dylib
+  echo
+  echo "Done. Export this before building the game:"
+  echo "  export REXGLUE_SDK=\"$SDK\""
+  exit 0
+fi
+
 echo "==> Building host tools (macOS arm64)"
 # The host tools are only the codegen CLI: profiling and perf counters are dead
 # weight that add minutes to every clean build.
