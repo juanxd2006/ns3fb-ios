@@ -63,29 +63,32 @@ else
   exit 1
 fi
 
-# Parche opcional de diagnostico: convierte el trap de funcion no registrada en
-# un stub que loguea la direccion y continua, para recolectar direcciones en un
-# solo run. Se activa/desactiva simplemente creando o borrando el archivo.
-TRAP_PATCH="$ROOT/ci/rexglue-trap-continue.patch"
+# Parches opcionales de nuestro repo (diagnostico y arreglos de kernel). Se
+# aplican todos los ci/rexglue-*.patch que existan, en orden alfabetico. Para
+# desactivar uno, basta con borrar el archivo del repo.
 TRAP_APPLIED=0
-if [ -f "$TRAP_PATCH" ]; then
-  if git -C "$SDK" apply --check "$TRAP_PATCH" 2>/dev/null; then
-    echo "==> Applying trap-continue diagnostic patch"
-    git -C "$SDK" apply "$TRAP_PATCH"
-    TRAP_APPLIED=1
-  elif grep -q "NS3FB-TRAP" "$SDK/src/system/function_dispatcher.cpp" 2>/dev/null; then
-    echo "==> Trap-continue patch already applied"
-    TRAP_APPLIED=1
+EXTRA_FINGERPRINT=""
+for extra in "$ROOT"/ci/rexglue-*.patch; do
+  [ -e "$extra" ] || continue
+  name="$(basename "$extra")"
+  if git -C "$SDK" apply --check "$extra" 2>/dev/null; then
+    echo "==> Applying $name"
+    git -C "$SDK" apply "$extra"
+  elif git -C "$SDK" apply --reverse --check "$extra" 2>/dev/null; then
+    echo "==> $name already applied"
   else
-    echo "trap-continue patch does not apply; remove ci/rexglue-trap-continue.patch" >&2
+    echo "$name does not apply against this SDK revision." >&2
+    echo "Rebase it or remove it from ci/ and re-run." >&2
     exit 1
   fi
-fi
+  case "$name" in *trap-continue*) TRAP_APPLIED=1 ;; esac
+  EXTRA_FINGERPRINT="$EXTRA_FINGERPRINT$name:$(shasum -a 256 "$extra" | awk '{print $1}');"
+done
 
 # Huella de los parches + version del SDK. Si cambia, la cache de out/ no sirve
-# y hay que recompilar: sin esto el guard reutilizaria dylibs sin el parche.
+# y hay que recompilar: sin esto el guard reutilizaria dylibs sin los parches.
 SDK_REV="$(git -C "$SDK" rev-parse HEAD 2>/dev/null || echo unknown)"
-FINGERPRINT="$(cat "$PATCH" "$TRAP_PATCH" 2>/dev/null | shasum -a 256 | awk '{print $1}')-$SDK_REV-$TRAP_APPLIED"
+FINGERPRINT="$(cat "$PATCH" 2>/dev/null | shasum -a 256 | awk '{print $1}')-$SDK_REV-$TRAP_APPLIED-$EXTRA_FINGERPRINT"
 STAMP="$SDK/out/.build-fingerprint"
 
 # `cmake --preset` resolves CMakePresets.json from the *current working
