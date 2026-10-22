@@ -1,45 +1,103 @@
 name: Build iOS IPA
-on: workflow_dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      clean_codegen:
+        description: "Regenerar el C++ recompilado desde cero"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REXGLUE_SDK: ${{ github.workspace }}/thirdparty/rexglue-sdk
 
 jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 350
-    env:
-      REXGLUE_SDK: ${{ github.workspace }}/thirdparty/rexglue-sdk
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Select Xcode 16
         run: |
-          ls /Applications | grep -i xcode || true
           XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
           xcodebuild -version
+          df -h /
+
       - name: Stage game executable
         run: |
           mkdir -p app/game
           cp ci/game/default.xex app/game/default.xex
           shasum -a 1 app/game/default.xex
+
       - name: Toolchain
         run: |
           brew install ninja
           cmake --version
+
+      - name: Restore ReXGlue SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            thirdparty/rexglue-sdk/out
+            thirdparty/rexglue-sdk-ios.patch
+          key: rexglue-sdk-ios-v1-${{ runner.arch }}
+
       - name: Build SDK
         run: |
           chmod +x scripts/*.sh
           ./scripts/00-fetch-sdk.sh
+
+      - name: Restore recompiled code
+        if: ${{ !inputs.clean_codegen }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/generated
+            app/ns3fb_manifest.toml
+          key: ns3fb-codegen-v1-${{ hashFiles('ci/game/default.xex') }}
+
       - name: Codegen
         run: ./scripts/01-codegen.sh
+
+      - name: Reclaim disk
+        run: |
+          rm -rf "$REXGLUE_SDK/out/install/mac-arm64" || true
+          rm -rf "$HOME/Library/Caches/Homebrew" || true
+          df -h /
+
       - name: Build app
         working-directory: app
         run: |
           cmake --preset ios-arm64-release
-          cmake --build --preset ios-arm64-release -j 3
+          cmake --build --preset ios-arm64-release -j "$(sysctl -n hw.ncpu)" 2>&1 | tee build.log
+          exit ${PIPESTATUS[0]}
+
       - name: Package IPA
         run: ./scripts/make-ipa.sh
+
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: NS3FB-ipa
           path: NS3FB.ipa
+          retention-days: 14
           if-no-files-found: error
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ns3fb-diagnostics
+          path: |
+            app/ns3fb_manifest.toml
+            app/build.log
+            **/*.log
+          retention-days: 14
+          if-no-files-found: ignore
