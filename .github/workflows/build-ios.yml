@@ -1,0 +1,40 @@
+name: Build iOS IPA
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 350
+    env:
+      REXGLUE_SDK: ${{ github.workspace }}/thirdparty/rexglue-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage game executable
+        run: |
+          mkdir -p app/game
+          cp ci/game/default.xex app/game/default.xex
+          shasum -a 1 app/game/default.xex
+      - name: Toolchain
+        run: |
+          brew install ninja
+          cmake --version
+          xcodebuild -version
+      - name: Build SDK
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/00-fetch-sdk.sh
+      - name: Codegen
+        run: ./scripts/01-codegen.sh
+      - name: Build app
+        working-directory: app
+        run: |
+          cmake --preset ios-arm64-release
+          cmake --build --preset ios-arm64-release -j 3
+      - name: Package IPA
+        run: ./scripts/make-ipa.sh
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: NS3FB-ipa
+          path: NS3FB.ipa
+          if-no-files-found: error
