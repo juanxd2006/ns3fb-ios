@@ -24,3 +24,8 @@
 0x828401A8
 0x828401C0
 0x828628F8
+
+# --- Primera ejecucion en iPhone 11 (A13, iOS 18.x), 2026-10-22 -------------
+# El juego arranco (Metal, swapchain, touch controls, memoria) y crasheo en:
+#   [critical] Call to invalid or unregistered function at guest address
+0x8276D788
