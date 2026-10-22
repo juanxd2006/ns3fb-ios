@@ -1,0 +1,25 @@
+--- a/src/kernel/xboxkrnl/xboxkrnl_io_info.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_io_info.cpp
+@@ -149,14 +149,14 @@
+       break;
+     }
+     case XFileXctdCompressionInformation: {
+-      REXKRNL_ERROR(
+-          "NtQueryInformationFile(XFileXctdCompressionInformation) "
+-          "unimplemented");
+-      // Files that are XCTD compressed begin with the magic 0x0FF512ED but we
+-      // shouldn't detect this that way. There's probably a flag somewhere
+-      // (attributes?) that defines if it's compressed or not.
+-      status = X_STATUS_INVALID_PARAMETER;
+-      out_length = 0;
++      // NS3FB: titles query this for their own image and retry forever when it
++      // comes back as an error. Report "no XCTD compression": the buffer was
++      // zeroed above, which is exactly what an uncompressed retail image looks
++      // like, and return success instead of X_STATUS_INVALID_PARAMETER.
++      auto info = info_ptr.as<X_FILE_XCTD_COMPRESSION_INFORMATION*>();
++      info->unknown = 0;
++      out_length = sizeof(*info);
++      status = X_STATUS_SUCCESS;
+       break;
+     };
+     case XFileNetworkOpenInformation: {
