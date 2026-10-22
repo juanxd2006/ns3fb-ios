@@ -52,6 +52,12 @@ else
   echo "==> Reusing existing ns3fb_manifest.toml"
 fi
 
+# Titulos reales siempre tienen ramas directas a funciones que el analizador no
+# ve (no estan en .pdata). Se declaran en [entrypoint.functions] antes de
+# recompilar, o el codegen aborta con "target not in any function".
+echo "==> Seeding entrypoints"
+python3 scripts/02-seed-entrypoints.py
+
 echo "==> Running codegen (slow: analyse + emit C++ for an 11 MB image)"
 "$TOOL" codegen ns3fb_manifest.toml
 
