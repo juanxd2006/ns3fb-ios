@@ -45,13 +45,22 @@ else
   exit 1
 fi
 
+# `cmake --preset` resolves CMakePresets.json from the *current working
+# directory*, not from -S. Running these from the repo root configures the right
+# tree and then dies with "Could not read presets", so enter the SDK first.
+cd "$SDK"
+
 echo "==> Building host tools (macOS arm64)"
-cmake --preset mac-arm64 -S "$SDK"
+# The host tools are only the codegen CLI: profiling and perf counters are dead
+# weight that add minutes to every clean build.
+cmake --preset mac-arm64 \
+  -DREXGLUE_ENABLE_TRACY=OFF \
+  -DREXGLUE_ENABLE_PERF_COUNTERS=OFF
 cmake --build --preset mac-arm64-release -j "$(sysctl -n hw.ncpu)"
 cmake --install "$SDK/out/build/mac-arm64" --config Release
 
 echo "==> Building iOS device dylibs (arm64)"
-cmake --preset ios-arm64 -S "$SDK"
+cmake --preset ios-arm64
 cmake --build --preset ios-arm64-release -j "$(sysctl -n hw.ncpu)"
 cmake --install "$SDK/out/build/ios-arm64" --config Release
 
