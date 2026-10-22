@@ -30,8 +30,15 @@ workflows:
     cache:
       # Sin esto, cada build recompila el SDK entero (~25-35 min).
       # Con caché caliente, 00-fetch-sdk.sh detecta los binarios y sale en segundos.
+      #
+      # Solo se cachean los ARTEFACTOS, no los arboles de build: las cuentas
+      # personales tienen un limite de 3 GB por workflow y out/build son varios
+      # GB de objetos .o que ya no se usan (el guard de 00-fetch-sdk.sh evita
+      # recompilar). Con estos paths el paquete baja a unos cientos de MB.
       cache_paths:
-        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/mac-arm64
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/ios-arm64
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/install/ios-arm64
         - $CM_BUILD_DIR/thirdparty/rexglue-sdk-ios.patch
 
     triggering:
@@ -105,8 +112,11 @@ workflows:
         REXGLUE_SDK: $CM_BUILD_DIR/thirdparty/rexglue-sdk
       xcode: 16.4
     cache:
+      # Los mismos paths que ios-unsigned: la cache se comparte por app.
       cache_paths:
-        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/mac-arm64
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/ios-arm64
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/install/ios-arm64
         - $CM_BUILD_DIR/thirdparty/rexglue-sdk-ios.patch
     scripts:
       - name: Build ReXGlue SDK (macOS + iOS)
