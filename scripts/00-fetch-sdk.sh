@@ -59,6 +59,17 @@ cmake --preset mac-arm64 \
 cmake --build --preset mac-arm64-release -j "$(sysctl -n hw.ncpu)"
 cmake --install "$SDK/out/build/mac-arm64" --config Release
 
+# iOS 16.0 is too low: Apple's libc++ only exposes std::to_chars for floating
+# point (used by std::format <- spdlog <- Vulkan headers) from iOS 16.3, and
+# clang hard-errors on it below that. Raise the deployment target in the patched
+# preset before configuring.
+perl -pi -e 's/"CMAKE_OSX_DEPLOYMENT_TARGET": "16\.0"/"CMAKE_OSX_DEPLOYMENT_TARGET": "16.3"/' \
+  "$SDK/CMakePresets.json"
+grep -q '"CMAKE_OSX_DEPLOYMENT_TARGET": "16.3"' "$SDK/CMakePresets.json" || {
+  echo "could not raise CMAKE_OSX_DEPLOYMENT_TARGET to 16.3 in $SDK/CMakePresets.json" >&2
+  exit 1
+}
+
 echo "==> Building iOS device dylibs (arm64)"
 cmake --preset ios-arm64
 cmake --build --preset ios-arm64-release -j "$(sysctl -n hw.ncpu)"
