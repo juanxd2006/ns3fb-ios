@@ -29,3 +29,5 @@
 # El juego arranco (Metal, swapchain, touch controls, memoria) y crasheo en:
 #   [critical] Call to invalid or unregistered function at guest address
 0x8276D788
+# Segunda ejecucion: paso de 0x8276D788, inicializo audio (6ch/48kHz) y cayo en:
+0x8276EB48
