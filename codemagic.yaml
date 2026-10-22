@@ -1,0 +1,93 @@
+# Codemagic CI — alternativa a GitHub Actions para compilar NS3FB.ipa.
+#
+# Por qué existe este archivo: GitHub Actions factura macOS ×10 (un build completo
+# son ~450–600 minutos de cuota), mientras que Codemagic da minutos de macOS
+# directamente. Mismos scripts, mismo resultado: un .ipa sin firmar.
+#
+# Configuración en Codemagic:
+#   1. Add application → GitHub → repo ns3fb-ios
+#   2. Codemagic lee este archivo automáticamente (no hay que usar su UI de iOS)
+#   3. Start new build → workflow "ios-unsigned"
+#
+# El .ipa sale como artefacto descargable del build.
+
+workflows:
+  ios-unsigned:
+    name: NS3FB iOS (unsigned IPA)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+
+    environment:
+      # rexglue-sdk se clona dentro del propio repo durante el build.
+      vars:
+        REXGLUE_SDK: $CM_BUILD_DIR/thirdparty/rexglue-sdk
+      # ReXGlue exige C++23: AppleClang 16 / Xcode 16 o superior.
+      # Si este número no está disponible en el momento del build, cámbialo por
+      # otro 16.x o por `latest`.
+      xcode: 16.4
+      cocoapods: default
+
+    cache:
+      # Sin esto, cada build recompila el SDK entero (~25-35 min).
+      # Con caché caliente, 00-fetch-sdk.sh detecta los binarios y sale en segundos.
+      cache_paths:
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk-ios.patch
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+      cancel_previous_builds: true
+
+    scripts:
+      - name: Toolchain
+        script: |
+          xcodebuild -version
+          brew install ninja || true
+          cmake --version
+          df -h /
+
+      - name: Stage game executable
+        script: |
+          mkdir -p app/game
+          cp ci/game/default.xex app/game/default.xex
+          shasum -a 1 app/game/default.xex
+          # El hash esperado es f7ad65e26a00df6c29c9d34b291819593e455e9f;
+          # 01-codegen.sh aborta si no coincide.
+
+      - name: Build ReXGlue SDK (macOS + iOS)
+        script: |
+          chmod +x scripts/*.sh
+          ./scripts/00-fetch-sdk.sh
+
+      - name: Codegen (recompile default.xex)
+        script: |
+          ./scripts/01-codegen.sh
+
+      - name: Build app
+        script: |
+          cd app
+          cmake --preset ios-arm64-release
+          cmake --build --preset ios-arm64-release -j "$(sysctl -n hw.ncpu)"
+
+      - name: Package IPA
+        script: |
+          ./scripts/make-ipa.sh
+          ls -lh NS3FB.ipa
+          shasum -a 256 NS3FB.ipa
+
+    artifacts:
+      - NS3FB.ipa
+      - app/ns3fb_manifest.toml
+      - $CM_BUILD_DIR/**/*.log
+
+    publishing:
+      email:
+        recipients:
+          - soysebas39@gmail.com
+        notify:
+          success: true
+          failure: true
