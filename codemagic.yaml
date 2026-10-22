@@ -69,9 +69,9 @@ workflows:
 
       - name: Build app
         script: |
-          cd app
-          cmake --preset ios-arm64-release
-          cmake --build --preset ios-arm64-release -j "$(sysctl -n hw.ncpu)"
+          # Sin --preset: rexglue init reescribe CMakePresets.json sin el preset
+          # iOS, y este script pasa todas las opciones explicitamente.
+          ./scripts/03-build-app.sh
 
       - name: Package IPA
         script: |
