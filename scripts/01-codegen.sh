@@ -39,8 +39,24 @@ echo "  ok"
 
 cd "$APP"
 
-# `init` writes ns3fb_manifest.toml plus the SDK boilerplate (generated/rexglue.cmake).
-# It is idempotent only with -f, so skip it when a manifest already exists.
+# `init` generates ns3fb_manifest.toml and generated/rexglue.cmake, which we do
+# need. But it also rewrites CMakeLists.txt and CMakePresets.json with its own
+# generic templates (RegeneratePolicy::RequiresForce) - destroying the iOS
+# bundle target and the ios-arm64 preset this project depends on. Keep copies
+# and put them back immediately after init.
+KEEP="$(mktemp -d)"
+for f in CMakeLists.txt CMakePresets.json; do
+  [ -f "$f" ] && cp "$f" "$KEEP/"
+done
+restore_project_files() {
+  for f in CMakeLists.txt CMakePresets.json; do
+    if [ -f "$KEEP/$f" ]; then
+      cp "$KEEP/$f" "$f"
+    fi
+  done
+}
+trap 'restore_project_files; rm -rf "$KEEP"' EXIT
+
 if [ ! -f ns3fb_manifest.toml ]; then
   echo "==> Initialising project (manifest + SDK boilerplate)"
   "$TOOL" -f init \
@@ -51,6 +67,10 @@ if [ ! -f ns3fb_manifest.toml ]; then
 else
   echo "==> Reusing existing ns3fb_manifest.toml"
 fi
+
+restore_project_files
+echo "==> Project files restored (CMakeLists.txt, CMakePresets.json)"
+echo "    preset iOS disponible: $(grep -c '"name": "ios-arm64-release"' CMakePresets.json || true)"
 
 # Titulos reales siempre tienen ramas directas a funciones que el analizador no
 # ve (no estan en .pdata). Se declaran en [entrypoint.functions] antes de
