@@ -1,0 +1,26 @@
+# Entrypoints que el analizador de ReXGlue no descubre por sí solo.
+#
+# Cada línea es una dirección del ejecutable (NTSC-U, Title ID 4E4D085C) que
+# recibe una rama directa pero no figura como función en .pdata. Sin sembrarla,
+# el codegen aborta con:
+#     UnresolvedCall  b 0x???????? from 0x???????? - target not in any function
+#
+# Se aplican al manifest en cada build por scripts/02-seed-entrypoints.py.
+# Para añadir una: pega la dirección que reporte el log, en una línea nueva.
+#
+# --- Run del 2026-10-22: 14 unresolved calls -------------------------------
+
+0x82861BE0
+0x828401F0
+0x827D92A8
+0x827D9BA8
+0x826EC2E8
+0x828401D8
+0x82840208
+0x82723138
+0x826E4C20
+0x82526C88
+0x827DD430
+0x828401A8
+0x828401C0
+0x828628F8
