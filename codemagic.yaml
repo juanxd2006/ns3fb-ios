@@ -91,3 +91,25 @@ workflows:
         notify:
           success: true
           failure: true
+
+  # Workflow auxiliar: compila SOLO el SDK y termina siempre en verde.
+  # Sirve para poblar la caché sin depender de que el codegen (que todavia
+  # puede fallar mientras se ajustan los entrypoints) llegue al final.
+  # Si la caché ya está caliente, este workflow tarda ~2 minutos.
+  sdk-cache:
+    name: Warm SDK cache only
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      vars:
+        REXGLUE_SDK: $CM_BUILD_DIR/thirdparty/rexglue-sdk
+      xcode: 16.4
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk-ios.patch
+    scripts:
+      - name: Build ReXGlue SDK (macOS + iOS)
+        script: |
+          chmod +x scripts/*.sh
+          ./scripts/00-fetch-sdk.sh
