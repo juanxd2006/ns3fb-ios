@@ -63,6 +63,31 @@ else
   exit 1
 fi
 
+# Parche opcional de diagnostico: convierte el trap de funcion no registrada en
+# un stub que loguea la direccion y continua, para recolectar direcciones en un
+# solo run. Se activa/desactiva simplemente creando o borrando el archivo.
+TRAP_PATCH="$ROOT/ci/rexglue-trap-continue.patch"
+TRAP_APPLIED=0
+if [ -f "$TRAP_PATCH" ]; then
+  if git -C "$SDK" apply --check "$TRAP_PATCH" 2>/dev/null; then
+    echo "==> Applying trap-continue diagnostic patch"
+    git -C "$SDK" apply "$TRAP_PATCH"
+    TRAP_APPLIED=1
+  elif grep -q "NS3FB-TRAP" "$SDK/src/system/function_dispatcher.cpp" 2>/dev/null; then
+    echo "==> Trap-continue patch already applied"
+    TRAP_APPLIED=1
+  else
+    echo "trap-continue patch does not apply; remove ci/rexglue-trap-continue.patch" >&2
+    exit 1
+  fi
+fi
+
+# Huella de los parches + version del SDK. Si cambia, la cache de out/ no sirve
+# y hay que recompilar: sin esto el guard reutilizaria dylibs sin el parche.
+SDK_REV="$(git -C "$SDK" rev-parse HEAD 2>/dev/null || echo unknown)"
+FINGERPRINT="$(cat "$PATCH" "$TRAP_PATCH" 2>/dev/null | shasum -a 256 | awk '{print $1}')-$SDK_REV-$TRAP_APPLIED"
+STAMP="$SDK/out/.build-fingerprint"
+
 # `cmake --preset` resolves CMakePresets.json from the *current working
 # directory*, not from -S. Running these from the repo root configures the right
 # tree and then dies with "Could not read presets", so enter the SDK first.
@@ -72,6 +97,7 @@ cd "$SDK"
 # tools and the iOS dylibs are already built. Skip configure+build entirely -
 # ninja judges by mtime and a restored tree would otherwise rebuild everything.
 if [ "${REXGLUE_SDK_FORCE:-0}" != "1" ] \
+   && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$FINGERPRINT" ] \
    && [ -x "$SDK/out/mac-arm64/Release/rexglue" ] \
    && [ -f "$SDK/out/ios-arm64/Release/librexruntime.dylib" ] \
    && [ -f "$SDK/out/ios-arm64/Release/librexgpu-xenos.dylib" ] \
@@ -110,6 +136,9 @@ echo "==> Building iOS device dylibs (arm64)"
 cmake --preset ios-arm64
 cmake --build --preset ios-arm64-release -j "$(sysctl -n hw.ncpu)"
 cmake --install "$SDK/out/build/ios-arm64" --config Release
+
+mkdir -p "$SDK/out"
+printf '%s' "$FINGERPRINT" > "$STAMP"
 
 echo
 echo "Done. Export this before building the game:"
