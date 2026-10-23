@@ -79,6 +79,30 @@ class Ns3fbApp : public rex::ReXApp {
     {
       const char* home_env = std::getenv("HOME");
       if (home_env && *home_env) {
+        // Marcadores vacios: basta duplicar un archivo en la app Archivos y
+        // renombrarlo. Evita tener que editar texto desde el iPhone.
+        struct MvkFlag {
+          const char* file;
+          const char* key;
+          const char* value;
+        };
+        static constexpr MvkFlag kMvkFlags[] = {
+            {"mvk_argument_buffers.txt", "MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "1"},
+            {"mvk_prefill.txt", "MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", "1"},
+            {"mvk_async_submit.txt", "MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0"},
+            {"mvk_mtlheap.txt", "MVK_CONFIG_USE_MTLHEAP", "1"},
+            {"mvk_max3_cmdbuf.txt", "MVK_CONFIG_MAX_ACTIVE_METAL_COMMAND_BUFFERS_PER_QUEUE", "3"},
+            {"mvk_fast_math.txt", "MVK_CONFIG_FAST_MATH", "1"},
+        };
+        for (const auto& flag : kMvkFlags) {
+          std::error_code flag_ec;
+          if (std::filesystem::exists(
+                  std::filesystem::path(home_env) / "Documents" / flag.file, flag_ec)) {
+            setenv(flag.key, flag.value, 1);
+            REXLOG_INFO("MoltenVK override (marker {}): {}={}", flag.file, flag.key, flag.value);
+          }
+        }
+
         const std::filesystem::path mvk_path =
             std::filesystem::path(home_env) / "Documents" / "mvk.txt";
         std::ifstream mvk_file(mvk_path);
