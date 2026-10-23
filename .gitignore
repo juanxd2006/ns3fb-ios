@@ -13,3 +13,6 @@ build-spike/
 
 # SDK checkout
 thirdparty/
+
+# Banco de medicion A/B (generado por scripts/perf-matrix.sh)
+perf/
