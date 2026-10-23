@@ -283,52 +283,72 @@ class Ns3fbApp : public rex::ReXApp {
     // (definido arriba). Para volver a probarlo sin recompilar, crear
     // Documents/async_on.txt en la app Archivos.
 
-    // Marcadores de cvars del runtime. SetFlagByName va POR ENCIMA de
-    // ns3fb.toml, asi que sirven para A/B sin editar el archivo.
-    {
-      struct CvarMarker {
-        const char* file;
-        const char* name;
-        const char* value;
-      };
-      static constexpr CvarMarker kCvarMarkers[] = {
-          // Arregla las pantallas negras: con async_shader_compilation activo,
-          // un frame que usa un pipeline de relleno NO se presenta.
-          {"no_async_present.txt", "async_shader_compilation", "false"},
-          {"no_async_present.txt", "vulkan_async_skip_incomplete_frames", "false"},
-          // Ruta FSI: emula la EDRAM en el pixel shader en vez de con compute.
-          // Cambia el reparto entre Compute GPU y Fragment GPU.
-          {"rtt_fsi.txt", "render_target_path_vulkan", "fsi"},
-          // Desactivar el salto de frames incompletos por separado.
-          {"no_skip_frames.txt", "vulkan_async_skip_incomplete_frames", "false"},
-          // A/B de async_shader_compilation: cuesta frames mientras compila,
-          // pero con el puesto no se presenta ningun frame que use un pipeline
-          // de relleno (pantallas negras).
-          {"async_on.txt", "async_shader_compilation", "true"},
-          // MSAA del host (parche ci/rexglue-msaa-override.patch). Existe
-          // tambien como clave de ns3fb.toml: estos marcadores hacen lo mismo
-          // desde la app Archivos. OJO: cualquier marcador msaaN.txt PISA el
-          // valor de ns3fb.toml, asi que para la matriz de rendimiento no
-          // debe quedar ninguno en Documents.
-          {"msaa1.txt", "msaa_override", "1"},
-          {"msaa2.txt", "msaa_override", "2"},
-          {"msaa4.txt", "msaa_override", "4"},
-      };
-      for (const auto& marker : kCvarMarkers) {
-        std::error_code marker_ec;
-        if (std::filesystem::exists(
-                std::filesystem::path(home) / "Documents" / marker.file, marker_ec)) {
-          if (rex::cvar::SetFlagByName(marker.name, marker.value)) {
-            REXLOG_INFO("cvar override (marker {}): {}={}", marker.file, marker.name, marker.value);
-          } else {
-            REXLOG_WARN("cvar override failed (marker {}): {}", marker.file, marker.name);
-          }
-        }
-      }
-    }
-
     REXLOG_INFO("iOS paths: game={} config={}", paths.game_data_root.string(),
                 paths.config_path.string());
+  }
+
+  // Los marcadores se aplican AQUI y no en OnConfigurePaths.
+  //
+  // Casi todos apuntan a cvars que define el plugin de GPU
+  // (async_shader_compilation, render_target_path_vulkan,
+  // vulkan_async_skip_incomplete_frames, msaa_override), y ese plugin se carga
+  // en ReXApp::SetupPresentation() -> LoadGpuPlugin(), que ocurre DESPUES de
+  // OnConfigurePaths. cvar::SetFlagFromSource devuelve kRejected cuando el cvar
+  // todavia no existe y no lo guarda para mas tarde (a diferencia de los
+  // valores de ns3fb.toml, que si se difieren en GetPendingValuesStorage), asi
+  // que aplicados antes se perdian en silencio y el A/B no medía lo que decia.
+  //
+  // OnPreLaunchModule se llama desde ReXApp::LaunchModule(), despues de cargar
+  // el plugin y antes de que el invitado lea ningun registro.
+  void OnPreLaunchModule() override {
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) {
+      return;
+    }
+
+    // Marcadores de cvars del runtime. SetFlagByName va POR ENCIMA de
+    // ns3fb.toml, asi que sirven para A/B sin editar el archivo.
+    struct CvarMarker {
+      const char* file;
+      const char* name;
+      const char* value;
+    };
+    static constexpr CvarMarker kCvarMarkers[] = {
+        // Arregla las pantallas negras: con async_shader_compilation activo,
+        // un frame que usa un pipeline de relleno NO se presenta.
+        {"no_async_present.txt", "async_shader_compilation", "false"},
+        {"no_async_present.txt", "vulkan_async_skip_incomplete_frames", "false"},
+        // Ruta FSI: emula la EDRAM en el pixel shader en vez de con compute.
+        // Cambia el reparto entre Compute GPU y Fragment GPU.
+        {"rtt_fsi.txt", "render_target_path_vulkan", "fsi"},
+        // Desactivar el salto de frames incompletos por separado.
+        {"no_skip_frames.txt", "vulkan_async_skip_incomplete_frames", "false"},
+        // A/B de async_shader_compilation: cuesta frames mientras compila,
+        // pero con el puesto no se presenta ningun frame que use un pipeline
+        // de relleno (pantallas negras).
+        {"async_on.txt", "async_shader_compilation", "true"},
+        // MSAA del host (parche ci/rexglue-msaa-override.patch). Existe tambien
+        // como clave de ns3fb.toml: estos marcadores hacen lo mismo desde la
+        // app Archivos. OJO: cualquier marcador msaaN.txt PISA el valor de
+        // ns3fb.toml, asi que para la matriz de rendimiento no debe quedar
+        // ninguno en Documents.
+        {"msaa1.txt", "msaa_override", "1"},
+        {"msaa2.txt", "msaa_override", "2"},
+        {"msaa4.txt", "msaa_override", "4"},
+    };
+    for (const auto& marker : kCvarMarkers) {
+      std::error_code marker_ec;
+      if (!std::filesystem::exists(
+              std::filesystem::path(home) / "Documents" / marker.file, marker_ec)) {
+        continue;
+      }
+      if (rex::cvar::SetFlagByName(marker.name, marker.value)) {
+        REXLOG_INFO("cvar override (marker {}): {}={}", marker.file, marker.name, marker.value);
+      } else {
+        REXLOG_WARN("cvar override failed (marker {}): {}={}", marker.file, marker.name,
+                    marker.value);
+      }
+    }
   }
 #endif
 };
