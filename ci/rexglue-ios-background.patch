@@ -1,0 +1,104 @@
+diff --git a/include/rex/graphics/graphics_system.h b/include/rex/graphics/graphics_system.h
+index ac6b056..85d7218 100644
+--- a/include/rex/graphics/graphics_system.h
++++ b/include/rex/graphics/graphics_system.h
+@@ -84,8 +84,8 @@ class GraphicsSystem : public system::IGraphicsSystem {
+                                bool blocking) override;
+ 
+   bool is_paused() const { return paused_; }
+-  void Pause();
+-  void Resume();
++  void Pause() override;
++  void Resume() override;
+ 
+   bool Save(::rex::stream::ByteStream* stream);
+   bool Restore(::rex::stream::ByteStream* stream);
+diff --git a/include/rex/system/interfaces/graphics.h b/include/rex/system/interfaces/graphics.h
+index d54df86..6a63b54 100644
+--- a/include/rex/system/interfaces/graphics.h
++++ b/include/rex/system/interfaces/graphics.h
+@@ -52,6 +52,17 @@ class IGraphicsSystem {
+ 
+   // --- Optional capabilities, default no-op -------------------------------
+ 
++  // Stop / restart guest GPU work.
++  //
++  // En iOS el proceso pierde el permiso de enviar trabajo a la GPU en cuanto
++  // pasa a segundo plano: el primer vkQueueSubmit despues devuelve
++  // VK_ERROR_DEVICE_LOST (kIOGPUCommandBufferCallbackErrorBackgroundExecution
++  // NotPermitted) y MoltenVK no se recupera, asi que la imagen se queda negra
++  // para siempre. Parar el command processor al perder el foco evita llegar a
++  // ese submit. Los backends que no lo necesiten lo dejan como no-op.
++  virtual void Pause() {}
++  virtual void Resume() {}
++
+   // Host presentation objects for ReXApp's overlay wiring; custom systems may
+   // leave these null.
+   virtual ui::GraphicsProvider* provider() const { return nullptr; }
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+index b94fe9e..80c53a2 100644
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -13,6 +13,12 @@
+ 
+ #include <cstdlib>
+ 
++#if defined(__APPLE__)
++// TARGET_OS_IPHONE: hace falta para distinguir iOS de macOS en las rutas de
++// pausa de la GPU. No lo arrastra ninguna cabecera de forma fiable.
++#include <TargetConditionals.h>
++#endif
++
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
+ #include <rex/ui/flags.h>
+@@ -535,11 +541,27 @@ void ReXApp::OnDpiChanged(ui::UISetupEvent& e) {
+ 
+ void ReXApp::OnGotFocus(ui::UISetupEvent& e) {
+   (void)e;
++#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
++  // Reanudar el command processor antes de que el invitado vuelva a dibujar.
++  if (config_.graphics) {
++    config_.graphics->Resume();
++  }
++#endif
+   OnWindowFocusChanged(true);
+ }
+ 
+ void ReXApp::OnLostFocus(ui::UISetupEvent& e) {
+   (void)e;
++#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
++  // iOS revoca el permiso de enviar trabajo a la GPU en cuanto la app deja de
++  // estar en primer plano. Si el invitado llega a hacer un submit despues, el
++  // VkDevice se pierde y no se recupera: pantalla negra permanente. Parar el
++  // command processor aqui evita el submit. Pause() bloquea solo hasta que el
++  // hilo del CP queda suspendido, no hasta que la GPU termina.
++  if (config_.graphics) {
++    config_.graphics->Pause();
++  }
++#endif
+   OnWindowFocusChanged(false);
+ }
+ 
+diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
+index 2251429..1c0355e 100644
+--- a/src/ui/window_sdl.cpp
++++ b/src/ui/window_sdl.cpp
+@@ -483,6 +483,17 @@ void WindowSDL::HandleWindowEvent(SDL_Event& event) {
+       // The platform cannot retain the previous image; force the paint.
+       OnPaint(true);
+       break;
++#if SDL_VERSION_ATLEAST(3, 2, 0)
++    // iOS y Android: al entrar en segundo plano se avisa por aqui, y no siempre
++    // con un FOCUS_LOST. Se traduce a la misma ruta para que la app pare la GPU
++    // antes de que el sistema le retire el permiso de enviar trabajo.
++    case SDL_EVENT_WILL_ENTER_BACKGROUND:
++      OnFocusUpdate(false, destruction_receiver);
++      break;
++    case SDL_EVENT_DID_ENTER_FOREGROUND:
++      OnFocusUpdate(true, destruction_receiver);
++      break;
++#endif
+     case SDL_EVENT_WINDOW_MINIMIZED:
+       OnMinimized(destruction_receiver);
+       break;
