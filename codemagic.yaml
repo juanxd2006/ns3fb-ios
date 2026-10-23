@@ -123,3 +123,25 @@ workflows:
         script: |
           chmod +x scripts/*.sh
           ./scripts/00-fetch-sdk.sh
+
+  # ---------------------------------------------------------------------------
+  # Spike aislado: mide si Metal puede resolver 4x MSAA dentro del tile
+  # (memoryless + MultisampleResolve) frente al compute resolve que usa Xenia.
+  #
+  # No compila el SDK ni toca el port: es un solo .mm con clang, asi que tarda
+  # ~1-2 minutos. Produce un IPA aparte con su propio bundle ID.
+  # ---------------------------------------------------------------------------
+  ios-metal-spike:
+    name: Metal spike (tile resolve)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: 16.4
+    scripts:
+      - name: Build spike IPA
+        script: |
+          xcodebuild -version
+          bash spike/build-ipa.sh
+          ls -lh MetalSpike.ipa
+    artifacts:
+      - MetalSpike.ipa
