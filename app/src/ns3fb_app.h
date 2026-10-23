@@ -55,6 +55,24 @@ class Ns3fbApp : public rex::ReXApp {
   // exposes (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace in
   // Info.plist), so that is where the extracted game is dropped.
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    // MoltenVK lee estas variables al crear la instancia, asi que hay que
+    // fijarlas antes de que arranque el runtime. Quitan el coste de la capa de
+    // validacion/diagnostico (en el log se veian avisos "{ Validation }" en
+    // cada frame) y activan los modos rapidos de MoltenVK.
+    //
+    // No sustituye a un backend Metal nativo: solo elimina el sobrecoste de
+    // traduccion que MoltenVK anade por su cuenta.
+    setenv("MVK_CONFIG_LOG_LEVEL", "0", 1);
+    setenv("MVK_CONFIG_PERFORMANCE_LOGGING", "0", 1);
+    setenv("MVK_CONFIG_ACTIVITY_PERFORMANCE_LOGGING", "0", 1);
+    setenv("MVK_CONFIG_API_LOGGING", "0", 1);
+    // Rellena los command buffers de Metal antes de enviarlos (menos picos de CPU).
+    setenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", "1", 1);
+    // Usa argument buffers de Metal para los descriptor sets (menos binding).
+    setenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "1", 1);
+    // No bloquea la CPU esperando a que Metal complete cada submit.
+    setenv("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0", 1);
+
     const char* home = std::getenv("HOME");
     if (!home || !home[0]) {
       return;
