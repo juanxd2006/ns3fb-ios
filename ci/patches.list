@@ -2,7 +2,8 @@
 # Para desactivar uno, quita su linea. (No se pueden borrar archivos en este
 # workspace, por eso la lista es explicita en vez de un glob.)
 rexglue-xctd-info.patch
-rexglue-launcher-menu.patch
+# DESACTIVADO a peticion: abria el editor de ajustes al arrancar.
+# rexglue-launcher-menu.patch
 rexglue-trap-continue.patch
 # EXPERIMENTO DESACTIVADO: forzaba 1x MSAA y corrompia la imagen (resolves
 # asumiendo 4 muestras). No reactivar sin arreglar tambien los shaders de resolve.
