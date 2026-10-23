@@ -3,7 +3,9 @@
 # workspace, por eso la lista es explicita en vez de un glob.)
 rexglue-xctd-info.patch
 rexglue-pass-stats.patch
-rexglue-keep-pass-open.patch
+# DESACTIVADO: kept_open=0 en dispositivo (todas las barreras resultan ser de
+# imagen), no aporta nada. Se deja el archivo como referencia.
+# rexglue-keep-pass-open.patch
 # DESACTIVADO a peticion: abria el editor de ajustes al arrancar.
 # rexglue-launcher-menu.patch
 rexglue-trap-continue.patch
