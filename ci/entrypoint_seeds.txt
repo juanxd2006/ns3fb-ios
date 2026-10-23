@@ -52,3 +52,6 @@
 # "access violation: read of guest 0x00000004".
 0x828DE618
 0x82768360
+
+# --- 2026-10-22 22:28: alcanzada en la seleccion de personaje ----------------
+0x8239B2D8
