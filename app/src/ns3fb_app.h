@@ -93,6 +93,10 @@ class Ns3fbApp : public rex::ReXApp {
             {"mvk_mtlheap.txt", "MVK_CONFIG_USE_MTLHEAP", "1"},
             {"mvk_max3_cmdbuf.txt", "MVK_CONFIG_MAX_ACTIVE_METAL_COMMAND_BUFFERS_PER_QUEUE", "3"},
             {"mvk_fast_math.txt", "MVK_CONFIG_FAST_MATH", "1"},
+            // Medicion: MoltenVK escribe por frame el tiempo de CPU y de GPU.
+            // Es el dato que separa "limitado por GPU" de "limitado por CPU".
+            {"mvk_perf_log.txt", "MVK_CONFIG_PERFORMANCE_LOGGING", "1"},
+            {"mvk_log_info.txt", "MVK_CONFIG_LOG_LEVEL", "1"},
         };
         for (const auto& flag : kMvkFlags) {
           std::error_code flag_ec;
