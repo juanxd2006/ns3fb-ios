@@ -138,6 +138,44 @@ Ahora se aplican en `OnPreLaunchModule()`, que corre después de cargar el
 plugin. Si el log vuelve a decir `cvar override failed`, el marcador no sirve y
 hay que usar `ns3fb.toml`.
 
+## Resultados medidos (iPhone 11 / A13, 1280x720, fbo)
+
+Medido con el Metal Performance HUD + `NS3FB-PASS` del log, mismo escenario.
+
+| Caso | Escena | GPU | Compute | Fragment | FPS | Imagen |
+|---|---|---|---|---|---|---|
+| `00-baseline` | menú | 61,09 ms | 32,56 | 20,21 | 15,75 | correcta |
+| `01-msaa2` | menú | 26,91 ms | 14,43 | 8,20 | 22,30 | **corrupta** |
+| `01-msaa2` | juego | 23,12 ms | 14,17 | 5,14 | 30,02 | **corrupta** |
+| `07-kpo-msaa2` | juego | 21,33 ms | 12,83 | 5,10 | 27,90 | **corrupta** |
+
+### Conclusión sobre `msaa_override`
+
+**Gana rendimiento y rompe la imagen.** Reduce la GPU un 27–56 % y llega a 30 fps
+en juego, pero aparecen bloques cian y texturas desaparecidas, también en el menú.
+
+No es cuestión del número de muestras (1x y 2x fallan igual): la EDRAM emulada
+está atada al layout de 4x del invitado, así que al cambiar las muestras del host
+los `resolve_*_cs` y los shaders que usan cobertura leen datos con otra geometría.
+Arreglarlo exige reescribir la ruta de resolve, no mover el punto donde se
+sobrescribe el registro.
+
+Por eso `msaa_override` se queda en **0** por defecto y se documenta como
+instrumento de medida: sirvió para demostrar que el resolve de MSAA es ~45 % del
+frame, que es un dato que no teníamos.
+
+### Conclusión sobre `keep_pass_open`
+
+Solo evitó el **7 %** de los cierres de render pass (`kept_open=1760` de
+`ends=25200`): dos de cada tres cierres los fuerza una barrera que toca un
+adjunto, y esos son inevitables. No compensa el riesgo de artefactos, que es
+justo lo que advierte el propio parche.
+
+### Siguiente palanca
+
+`03-540p`: 960x540 sin tocar MSAA. 0,56x píxeles sobre el 87 % del frame, sin
+cambiar semántica, así que no puede corromper nada.
+
 ## Cómo leer el resultado
 
 El CSV (`perf/summary.csv`) trae, por caso:
