@@ -50,6 +50,11 @@
 	<string>0.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<!-- Marcarla como juego activa Game Mode en iOS (pantalla completa +
+	     categoria de juegos): menos actividad en segundo plano y mejor latencia
+	     de entrada. Ver "Improving your game's graphics performance". -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.games</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
