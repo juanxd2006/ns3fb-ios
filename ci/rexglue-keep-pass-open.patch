@@ -37,12 +37,16 @@
  bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
    assert_true(submission_open_);
    SplitPendingBarrier();
-@@ -3076,7 +3099,9 @@
+@@ -3076,7 +3099,13 @@
      return false;
    }
    g_pass_ends_for_barriers.fetch_add(1, std::memory_order_relaxed);
 -  EndRenderPass();
-+  if (!(KeepPassOpenEnabled() && use_dynamic_rendering_ && in_render_pass_)) {
++  // En dynamic rendering el pase activo tiene current_render_pass_ a NULL; en la
++  // ruta clasica hay un VkRenderPass real y hay que cerrarlo para poder cambiar
++  // de layout de los adjuntos.
++  const bool dynamic_rendering_active = in_render_pass_ && current_render_pass_ == VK_NULL_HANDLE;
++  if (!(KeepPassOpenEnabled() && dynamic_rendering_active)) {
 +    EndRenderPass();
 +  }
    for (auto it = pending_barriers_.cbegin(); it != pending_barriers_.cend(); ++it) {
