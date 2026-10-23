@@ -31,6 +31,7 @@ xcrun --sdk iphoneos clang++ \
   -O2 \
   -framework UIKit \
   -framework Foundation \
+  -framework CoreGraphics \
   -framework Metal \
   -framework QuartzCore \
   -o "$APP/MetalSpike" \
