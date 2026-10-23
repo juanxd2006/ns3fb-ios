@@ -1,0 +1,125 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -36,6 +36,9 @@
+ #include <rex/graphics/vulkan/command_processor.h>
+ 
+ #include <atomic>
++#include <cstdlib>
++#include <filesystem>
++#include <system_error>
+ #include <rex/graphics/vulkan/pipeline_cache.h>
+ #include <rex/graphics/vulkan/render_target_cache.h>
+ #include <rex/graphics/vulkan/shader.h>
+@@ -82,6 +85,56 @@
+ std::atomic<uint64_t> g_pass_ends{0};
+ std::atomic<uint64_t> g_pass_ends_for_barriers{0};
+ std::atomic<uint64_t> g_frames{0};
++// Cuantas rupturas se han evitado manteniendo el pase abierto, y cuantas
++// barreras se han dejado pasar dentro del pase.
++std::atomic<uint64_t> g_pass_kept_open{0};
++std::atomic<uint64_t> g_barriers_kept_inside_pass{0};
++// Rupturas que NO se han podido evitar porque la barrera toca un adjunto.
++std::atomic<uint64_t> g_pass_split_by_attachment{0};
++
++// NS3FB: en las GPU Apple (TBDR) cada ruptura del render pass obliga a volcar
++// los tiles a memoria y recargarlos al abrirlo de nuevo. Storm 3 rompe el pase
++// ~130 veces por frame, y eso solo ya cuesta ~30 ms de GPU incluso con la
++// pantalla en negro (medido con el overlay de MoltenVK: 30.18 ms GPU, 26 ms de
++// ellos fijos, sin geometria alguna).
++//
++// Mantener el pase abierto es legal en Vulkan siempre que las barreras no
++// transicionen un adjunto del pase activo: cambiar el layout de un attachment
++// a mitad de pase es comportamiento indefinido. Las barreras que llevan una
++// textura muestreada a SHADER_READ_ONLY / TRANSFER / GENERAL si son legales
++// dentro del pase y no deben romperlo.
++//
++// Se activa creando Documents/keep_pass_open.txt en la app Archivos; sin ese
++// archivo el comportamiento es exactamente el de antes.
++bool KeepPassOpenEnabled() {
++  static const bool enabled = [] {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) {
++      return false;
++    }
++    std::error_code ec;
++    return std::filesystem::exists(
++        std::filesystem::path(home) / "Documents" / "keep_pass_open.txt", ec);
++  }();
++  return enabled;
++}
++
++// Layouts que solo puede tener un adjunto del pase. Una barrera que toque uno
++// de estos en cualquiera de sus dos lados obliga a cerrar el pase.
++bool IsAttachmentLayout(VkImageLayout layout) {
++  switch (layout) {
++    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
++    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
++    case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
++    case VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL:
++    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
++    case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL:
++    case VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL:
++      return true;
++    default:
++      return false;
++  }
++}
+ }  // namespace
+ 
+ 
+@@ -3076,7 +3129,36 @@
+     return false;
+   }
+   g_pass_ends_for_barriers.fetch_add(1, std::memory_order_relaxed);
+-  EndRenderPass();
++  // NS3FB: decidir si el pase tiene que cerrarse de verdad.
++  //
++  // - force_end_render_pass: el llamante necesita el pase cerrado (present,
++  //   transferencias, cambio de render target). No se toca.
++  // - Solo tiene sentido mantenerlo abierto con dynamic rendering, que es la
++  //   ruta que usa MoltenVK (current_render_pass_ == VK_NULL_HANDLE).
++  // - Si alguna barrera pendiente toca un layout de adjunto, hay que cerrar.
++  bool keep_pass_open = false;
++  if (!force_end_render_pass && KeepPassOpenEnabled() && in_render_pass_ &&
++      current_render_pass_ == VK_NULL_HANDLE) {
++    bool touches_attachment = false;
++    for (const auto& image_barrier : pending_barriers_image_memory_barriers_) {
++      if (IsAttachmentLayout(image_barrier.oldLayout) ||
++          IsAttachmentLayout(image_barrier.newLayout)) {
++        touches_attachment = true;
++        break;
++      }
++    }
++    keep_pass_open = !touches_attachment;
++  }
++  if (keep_pass_open) {
++    g_pass_kept_open.fetch_add(1, std::memory_order_relaxed);
++    g_barriers_kept_inside_pass.fetch_add(pending_barriers_.size(),
++                                          std::memory_order_relaxed);
++  } else {
++    if (!pending_barriers_image_memory_barriers_.empty()) {
++      g_pass_split_by_attachment.fetch_add(1, std::memory_order_relaxed);
++    }
++    EndRenderPass();
++  }
+   for (auto it = pending_barriers_.cbegin(); it != pending_barriers_.cend(); ++it) {
+     auto it_next = std::next(it);
+     bool is_last = it_next == pending_barriers_.cend();
+@@ -3280,9 +3362,14 @@
+   }
+   const uint64_t pass_ends = g_pass_ends.fetch_add(1, std::memory_order_relaxed) + 1;
+   if ((pass_ends % 300) == 0) {
+-    REXLOG_INFO("NS3FB-PASS ends={} begins={} barrier_ends={}", pass_ends,
+-                g_pass_begins.load(std::memory_order_relaxed),
+-                g_pass_ends_for_barriers.load(std::memory_order_relaxed));
++    REXLOG_INFO(
++        "NS3FB-PASS ends={} begins={} barrier_ends={} kept_open={} "
++        "barriers_in_pass={} split_by_attachment={}",
++        pass_ends, g_pass_begins.load(std::memory_order_relaxed),
++        g_pass_ends_for_barriers.load(std::memory_order_relaxed),
++        g_pass_kept_open.load(std::memory_order_relaxed),
++        g_barriers_kept_inside_pass.load(std::memory_order_relaxed),
++        g_pass_split_by_attachment.load(std::memory_order_relaxed));
+   }
+   if (current_render_pass_ == VK_NULL_HANDLE) {
+     deferred_command_buffer_.CmdVkEndRendering();
