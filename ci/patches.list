@@ -17,6 +17,12 @@ rexglue-keep-pass-open-v2.patch
 # DESACTIVADO a peticion: abria el editor de ajustes al arrancar.
 # rexglue-launcher-menu.patch
 rexglue-trap-continue.patch
-# EXPERIMENTO DESACTIVADO: forzaba 1x MSAA y corrompia la imagen (resolves
-# asumiendo 4 muestras). No reactivar sin arreglar tambien los shaders de resolve.
+# MSAA del host configurable sin recompilar: cvar msaa_override = 0|1|2|4
+# (0 = valor del invitado). Se aplica en la unica lectura de RB_SURFACE_INFO,
+# de la que derivan render pass, pipelines y shader de resolve, asi que no
+# puede quedar un target a 1x con un resolve a 4x.
+rexglue-msaa-override.patch
+# HISTORICO, SUSTITUIDO por rexglue-msaa-override.patch. Forzaba 1x siempre y
+# corrompia la imagen; ademas no se podia desactivar sin recompilar, asi que
+# nunca se pudo medir de verdad. Se conserva como referencia.
 # rexglue-force-1x-msaa.patch
