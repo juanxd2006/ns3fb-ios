@@ -305,6 +305,14 @@ class Ns3fbApp : public rex::ReXApp {
           // pero con el puesto no se presenta ningun frame que use un pipeline
           // de relleno (pantallas negras).
           {"async_on.txt", "async_shader_compilation", "true"},
+          // MSAA del host (parche ci/rexglue-msaa-override.patch). Existe
+          // tambien como clave de ns3fb.toml: estos marcadores hacen lo mismo
+          // desde la app Archivos. OJO: cualquier marcador msaaN.txt PISA el
+          // valor de ns3fb.toml, asi que para la matriz de rendimiento no
+          // debe quedar ninguno en Documents.
+          {"msaa1.txt", "msaa_override", "1"},
+          {"msaa2.txt", "msaa_override", "2"},
+          {"msaa4.txt", "msaa_override", "4"},
       };
       for (const auto& marker : kCvarMarkers) {
         std::error_code marker_ec;
