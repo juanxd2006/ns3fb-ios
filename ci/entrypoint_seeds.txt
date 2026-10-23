@@ -55,3 +55,16 @@
 
 # --- 2026-10-22 22:28: alcanzada en la seleccion de personaje ----------------
 0x8239B2D8
+
+# --- 2026-10-23 18:12: sintoma final acotado ---------------------------------
+# Medido con el Metal HUD + contadores de draws: el mundo 3D se ENVIA
+# (246 triangle strips, 204.310 verts por 300 draws) pero sale negro; el HUD y
+# las particulas se ven, y los modelos 3D de la seleccion de personaje tambien
+# salen negros. El 3D esta roto en general, no solo en la pelea.
+# Estas 6 funciones se ejecutaron como no-op (trap-continue) en cada sesion:
+0x8226C750
+0x8226C790
+0x82575E68
+0x82575F78
+0x825A7898
+0x825EBAC8
