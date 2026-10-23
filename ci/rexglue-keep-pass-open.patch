@@ -10,16 +10,17 @@
  #include <rex/graphics/vulkan/pipeline_cache.h>
  #include <rex/graphics/vulkan/render_target_cache.h>
  #include <rex/graphics/vulkan/shader.h>
-@@ -3066,6 +3069,26 @@
+@@ -3066,6 +3069,28 @@
    return true;
  }
  
 +namespace {
-+// NS3FB experimento: mantener el render pass abierto al enviar barreras.
-+// Cada cierre obliga a MoltenVK a terminar y reabrir el encoder de Metal; en
-+// Storm 3 se cierra ~57 veces por frame. Se activa creando el archivo
-+// Documents/keep_pass_open.txt en el contenedor de la app (app Archivos), asi
-+// se puede comparar A/B sin recompilar.
++// NS3FB experimento A (conservador): mantener el render pass abierto cuando se
++// envian barreras, pero SOLO si ninguna de las barreras pendientes es de
++// imagen. Las barreras de imagen pueden transicionar los adjuntos del pase, y
++// hacerlo dentro del pase es ilegal en Vulkan (la version sin filtrar daba
++// pantalla negra). Las de buffer si son legales dentro de un render pass.
++// Se activa creando Documents/keep_pass_open.txt en la app Archivos.
 +bool KeepPassOpenEnabled() {
 +  static const bool enabled = [] {
 +    const char* home = std::getenv("HOME");
@@ -32,23 +33,38 @@
 +  }();
 +  return enabled;
 +}
++std::atomic<uint64_t> g_pass_kept_open{0};
 +}  // namespace
 +
  bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
    assert_true(submission_open_);
    SplitPendingBarrier();
-@@ -3076,7 +3099,13 @@
+@@ -3076,7 +3101,14 @@
      return false;
    }
    g_pass_ends_for_barriers.fetch_add(1, std::memory_order_relaxed);
 -  EndRenderPass();
-+  // En dynamic rendering el pase activo tiene current_render_pass_ a NULL; en la
-+  // ruta clasica hay un VkRenderPass real y hay que cerrarlo para poder cambiar
-+  // de layout de los adjuntos.
++  // dynamic rendering: pase activo con current_render_pass_ == NULL.
 +  const bool dynamic_rendering_active = in_render_pass_ && current_render_pass_ == VK_NULL_HANDLE;
-+  if (!(KeepPassOpenEnabled() && dynamic_rendering_active)) {
++  const bool only_buffer_barriers = pending_barriers_image_memory_barriers_.empty();
++  if (KeepPassOpenEnabled() && dynamic_rendering_active && only_buffer_barriers) {
++    g_pass_kept_open.fetch_add(1, std::memory_order_relaxed);
++  } else {
 +    EndRenderPass();
 +  }
    for (auto it = pending_barriers_.cbegin(); it != pending_barriers_.cend(); ++it) {
      auto it_next = std::next(it);
      bool is_last = it_next == pending_barriers_.cend();
+@@ -3280,9 +3312,10 @@
+   }
+   const uint64_t pass_ends = g_pass_ends.fetch_add(1, std::memory_order_relaxed) + 1;
+   if ((pass_ends % 300) == 0) {
+-    REXLOG_INFO("NS3FB-PASS ends={} begins={} barrier_ends={}", pass_ends,
++    REXLOG_INFO("NS3FB-PASS ends={} begins={} barrier_ends={} kept_open={}", pass_ends,
+                 g_pass_begins.load(std::memory_order_relaxed),
+-                g_pass_ends_for_barriers.load(std::memory_order_relaxed));
++                g_pass_ends_for_barriers.load(std::memory_order_relaxed),
++                g_pass_kept_open.load(std::memory_order_relaxed));
+   }
+   if (current_render_pass_ == VK_NULL_HANDLE) {
+     deferred_command_buffer_.CmdVkEndRendering();
