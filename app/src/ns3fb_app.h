@@ -270,9 +270,18 @@ class Ns3fbApp : public rex::ReXApp {
     // humo, particulas de los jutsus) se expandian por la ruta lenta de
     // primitivas. Expandirlos en el vertex shader es mucho mas barato.
     rex::cvar::SetDefaultByName("vulkan_force_expand_point_sprites_in_vs", "true");
-    // Con true, un draw cuyo pipeline aun no esta compilado se salta en vez de
-    // bloquear el frame. Cuesta algun efecto en el primer instante.
-    rex::cvar::SetDefaultByName("async_shader_compilation", "true");
+    // async_shader_compilation: DELIBERADAMENTE no se vuelve a fijar aqui.
+    //
+    // Habia un segundo SetDefaultByName("async_shader_compilation", "true")
+    // justo en este punto, que ganaba al de arriba y dejaba el valor efectivo
+    // en true, contradiciendo el README y el comentario de la primera
+    // definicion. Con true, un frame que usa un pipeline de relleno no se
+    // presenta: en el log aparece literalmente
+    //   "Skipping Vulkan frame presentation due to async placeholder draw
+    //    usage in this frame"
+    // y esa era la pantalla negra. El valor por defecto queda en "false"
+    // (definido arriba). Para volver a probarlo sin recompilar, crear
+    // Documents/async_on.txt en la app Archivos.
 
     // Marcadores de cvars del runtime. SetFlagByName va POR ENCIMA de
     // ns3fb.toml, asi que sirven para A/B sin editar el archivo.
@@ -292,6 +301,10 @@ class Ns3fbApp : public rex::ReXApp {
           {"rtt_fsi.txt", "render_target_path_vulkan", "fsi"},
           // Desactivar el salto de frames incompletos por separado.
           {"no_skip_frames.txt", "vulkan_async_skip_incomplete_frames", "false"},
+          // A/B de async_shader_compilation: cuesta frames mientras compila,
+          // pero con el puesto no se presenta ningun frame que use un pipeline
+          // de relleno (pantallas negras).
+          {"async_on.txt", "async_shader_compilation", "true"},
       };
       for (const auto& marker : kCvarMarkers) {
         std::error_code marker_ec;
