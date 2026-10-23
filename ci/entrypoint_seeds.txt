@@ -40,3 +40,9 @@
 0x825A7978
 0x82261C88
 0x8276F2A0
+
+# --- Build con Xctd implementado + 5 seeds, 2026-10-22 19:19 -----------------
+# El juego mostro CC2, CRIWARE, BANDAI, BANDAI NAMCO y el aviso de autoguardado.
+# Despues: VK_ERROR_DEVICE_LOST (Metal perdio el dispositivo).
+0x82261CA8
+0x82868BA0
