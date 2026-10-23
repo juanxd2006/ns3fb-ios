@@ -1,0 +1,82 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 001f36b..f97b463 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -46,6 +46,9 @@
+ #include <rex/ui/vulkan/presenter.h>
+ #include <rex/ui/vulkan/util.h>
+ 
++#include <atomic>
++#include <string>
++
+ // Legacy backend compatibility aliases for shared readback controls.
+ REXCVAR_DEFINE_BOOL(vulkan_readback_resolve, false, "GPU/Vulkan",
+                     "Read render-to-texture results on the CPU")
+@@ -3587,6 +3590,49 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
+   return pipeline_cache_->LoadShader(shader_type, host_address, dword_count);
+ }
+ 
++// --- NS3FB: contadores de draw calls -------------------------------------
++//
++// Sirve para responder a una sola pregunta con un build: el juego manda
++// dibujar el mundo 3D en la pelea, o no?
++//
++//   - si en la pelea se acumulan draws con primitivas de triangulos e indices,
++//     el mundo SI se envia y el fallo esta en el estado/binding del emulador;
++//   - si en la pelea solo aparecen quads y lineas (efectos y HUD), el juego no
++//     esta emitiendo la geometria del mundo, y el fallo es de logica del
++//     invitado (culling/LOD) o de datos, no del renderer.
++//
++// Se imprime una linea cada 300 draws, con el reparto por tipo de primitiva.
++namespace {
++
++std::atomic<uint64_t> g_ns3fb_draw_total{0};
++std::atomic<uint64_t> g_ns3fb_draw_indexed{0};
++std::atomic<uint64_t> g_ns3fb_verts_total{0};
++std::atomic<uint64_t> g_ns3fb_draw_by_prim[32] = {};
++
++}  // namespace
++
++static void Ns3fbLogDrawStatsIfNeeded() {
++  static uint64_t last_logged_total = 0;
++  const uint64_t total = g_ns3fb_draw_total.load(std::memory_order_relaxed);
++  if (total - last_logged_total < 300) {
++    return;
++  }
++  last_logged_total = total;
++  const uint64_t indexed = g_ns3fb_draw_indexed.exchange(0, std::memory_order_relaxed);
++  const uint64_t verts = g_ns3fb_verts_total.exchange(0, std::memory_order_relaxed);
++  std::string prims;
++  for (uint32_t i = 0; i < 32; ++i) {
++    const uint64_t count = g_ns3fb_draw_by_prim[i].exchange(0, std::memory_order_relaxed);
++    if (count) {
++      prims += " p";
++      prims += std::to_string(i);
++      prims += "=";
++      prims += std::to_string(count);
++    }
++  }
++  REXLOG_INFO("NS3FB-DRAW next300 indexed={} verts={} prims:{}", indexed, verts, prims);
++}
++
+ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
+                                        IndexBufferInfo* index_buffer_info,
+                                        bool major_mode_explicit) {
+@@ -3596,6 +3642,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+ 
+   const RegisterFile& regs = *register_file_;
+   (void)index_buffer_info;
++
++  // NS3FB: contabilizar antes de dibujar, para que los draws que fallen
++  // tambien cuenten (un fallo silencioso seria justo lo que buscamos).
++  g_ns3fb_draw_total.fetch_add(1, std::memory_order_relaxed);
++  g_ns3fb_draw_by_prim[uint32_t(prim_type) & 31].fetch_add(1, std::memory_order_relaxed);
++  if (index_buffer_info) {
++    g_ns3fb_draw_indexed.fetch_add(1, std::memory_order_relaxed);
++  }
++  g_ns3fb_verts_total.fetch_add(index_count, std::memory_order_relaxed);
++  Ns3fbLogDrawStatsIfNeeded();
++
+   auto draw_fail = [&](const char* stage) {
+     auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+     REXGPU_ERROR(
