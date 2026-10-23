@@ -180,6 +180,18 @@ class Ns3fbApp : public rex::ReXApp {
     // warm phone; 8 ran dry, heard as choppy sound.
     rex::cvar::SetDefaultByName("audio_maxqframes", "16");
 
+    // Rendimiento (perfil medido en iPhone 11 / A13, ~15 fps en el menu antes).
+    //
+    // Anisotropico a 3x por defecto: cuesta ancho de banda y a 720p no se nota.
+    rex::cvar::SetDefaultByName("anisotropic_override", "0");
+    // Metal no tiene geometry shaders, asi que los point sprites (chispas,
+    // humo, particulas de los jutsus) se expandian por la ruta lenta de
+    // primitivas. Expandirlos en el vertex shader es mucho mas barato.
+    rex::cvar::SetDefaultByName("vulkan_force_expand_point_sprites_in_vs", "true");
+    // Con true, un draw cuyo pipeline aun no esta compilado se salta en vez de
+    // bloquear el frame. Cuesta algun efecto en el primer instante.
+    rex::cvar::SetDefaultByName("async_shader_compilation", "true");
+
     REXLOG_INFO("iOS paths: game={} config={}", paths.game_data_root.string(),
                 paths.config_path.string());
   }
