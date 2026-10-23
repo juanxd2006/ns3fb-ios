@@ -8,6 +8,7 @@ app/ns3fb_manifest.toml
 
 # Build output
 app/out/
+build-spike/
 *.ipa
 
 # SDK checkout
