@@ -16,6 +16,10 @@ rexglue-keep-pass-open-v2.patch
 # rexglue-keep-pass-open.patch
 # DESACTIVADO a peticion: abria el editor de ajustes al arrancar.
 # rexglue-launcher-menu.patch
+# Pausa la GPU al pasar a segundo plano. Sin esto iOS revoca el permiso de
+# enviar trabajo al GPU, el VkDevice se pierde y la imagen queda negra para
+# siempre (kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted).
+rexglue-ios-background.patch
 rexglue-trap-continue.patch
 # MSAA del host configurable sin recompilar: cvar msaa_override = 0|1|2|4
 # (0 = valor del invitado). Se aplica en la unica lectura de RB_SURFACE_INFO,
