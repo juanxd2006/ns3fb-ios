@@ -20,6 +20,9 @@ rexglue-keep-pass-open-v2.patch
 # enviar trabajo al GPU, el VkDevice se pierde y la imagen queda negra para
 # siempre (kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted).
 rexglue-ios-background.patch
+# Contadores de draw calls cada 300: distingue "el juego no manda dibujar el
+# mundo" de "lo dibuja y sale negro". Temporal, para diagnostico.
+rexglue-draw-stats.patch
 rexglue-trap-continue.patch
 # MSAA del host configurable sin recompilar: cvar msaa_override = 0|1|2|4
 # (0 = valor del invitado). Se aplica en la unica lectura de RB_SURFACE_INFO,
