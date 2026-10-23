@@ -67,11 +67,13 @@ if [ -n "$MVK_VERSION" ] && [ -e "$MVK_DIR/.git" ]; then
       git -C "$MVK_DIR" fetch -q --tags origin
     fi
     git -C "$MVK_DIR" checkout -q "tags/$MVK_VERSION"
-    # SPIRV-Cross, SPIRV-Tools y Vulkan-Headers internos de MoltenVK van fijados
-    # por su ExternalRevisions/. Sin esto se compilaria 1.4.2 contra el
-    # SPIRV-Cross de 1.4.1, que es justo la pieza que traduce los shaders.
-    git -C "$MVK_DIR" submodule update --init --recursive -q
-    echo "==> MoltenVK now at $(git -C "$MVK_DIR" describe --tags --always)"
+    # MoltenVK NO usa submodulos de git: sus dependencias (SPIRV-Cross,
+    # SPIRV-Tools, Vulkan-Headers) las baja CPM en tiempo de configure, leyendo
+    # los commits de ExternalRevisions/*_repo_revision. Al hacer checkout del
+    # tag, esas revisiones ya son las de 1.4.2, asi que el SPIRV-Cross nuevo
+    # -la pieza que traduce los shaders a MSL- entra solo. No hay nada que
+    # sincronizar a mano aqui.
+    echo "==> MoltenVK now at $(git -C "$MVK_DIR" describe --tags --always), ExternalRevisions: $(cat "$MVK_DIR/ExternalRevisions/SPIRV-Cross_repo_revision")"
   else
     echo "==> MoltenVK already at $MVK_VERSION"
   fi
