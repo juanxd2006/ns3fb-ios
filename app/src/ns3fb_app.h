@@ -55,6 +55,13 @@ class Ns3fbApp : public rex::ReXApp {
   // exposes (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace in
   // Info.plist), so that is where the extracted game is dropped.
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    // Copiado del preset cap60 de Skate 3 iOS (que expone este ajuste como
+    // cvar propio): presentar con el mismo command buffer del submit evita
+    // crear uno adicional por frame en MoltenVK.
+    // MoltenVK lee la variable al crear la instancia, asi que debe fijarse
+    // antes de que arranque el runtime.
+    setenv("MVK_CONFIG_PRESENT_WITH_COMMAND_BUFFER", "1", 1);
+
     const char* home = std::getenv("HOME");
     if (!home || !home[0]) {
       return;
