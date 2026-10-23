@@ -1,0 +1,105 @@
+diff --git a/include/rex/graphics/flags.h b/include/rex/graphics/flags.h
+index 2cf24c4..84e82a1 100644
+--- a/include/rex/graphics/flags.h
++++ b/include/rex/graphics/flags.h
+@@ -40,6 +40,9 @@ REXCVAR_DECLARE(bool, native_stencil_value_output);
+ REXCVAR_DECLARE(bool, native_stencil_value_output_d3d12_intel);
+ REXCVAR_DECLARE(bool, gamma_render_target_as_unorm16);
+ REXCVAR_DECLARE(bool, native_2x_msaa);
++// MSAA del host forzado desde la configuracion: 0 = lo que pida el invitado,
++// 1 / 2 / 4 = numero de muestras forzado. Ver register_file.h.
++REXCVAR_DECLARE(int32_t, msaa_override);
+ REXCVAR_DECLARE(bool, snorm16_render_target_full_range);
+ REXCVAR_DECLARE(bool, mrt_edram_used_range_clamp_to_min);
+ REXCVAR_DECLARE(bool, direct_host_resolve);
+diff --git a/include/rex/graphics/register_file.h b/include/rex/graphics/register_file.h
+index 36e07dd..2961e83 100644
+--- a/include/rex/graphics/register_file.h
++++ b/include/rex/graphics/register_file.h
+@@ -14,14 +14,57 @@
+ #include <cstdint>
+ #include <cstdlib>
+ #include <cstring>
++#include <type_traits>
+ 
+ #include <rex/assert.h>
++#include <rex/cvar.h>
++#include <rex/logging.h>
+ #include <rex/graphics/registers.h>
+ #include <rex/graphics/xenos.h>
+ #include <rex/memory.h>
+ 
+ namespace rex::graphics {
+ 
++// NS3FB: MSAA del host configurable desde ns3fb.toml (msaa_override = 1|2|4) o
++// desde un marcador en Documents/ (msaa1.txt, msaa2.txt, msaa4.txt).
++//
++//   msaa_override = 0  -> lo que pida el juego (comportamiento original)
++//                 = 1  -> 1x: elimina el resolve de 4 muestras y el ancho de
++//                         banda 4x, pero tambien el antialiasing y cualquier
++//                         efecto que dependa de cobertura por muestra
++//                 = 2  -> 2x: mitad de ancho de banda conservando cobertura
++//                 = 4  -> 4x: fuerza el maximo (referencia)
++//
++// Se aplica en la lectura de RB_SURFACE_INFO porque de ella derivan a la vez
++// el render pass del host, la clave de las pipelines y la eleccion del shader
++// de resolve (draw_util::GetResolveInfo tambien lee por aqui), asi que todo el
++// camino queda coherente: no puede quedar un target a 1x con un resolve a 4x.
++//
++// El valor se consulta una sola vez: los cvars quedan fijados antes de que se
++// cree el VkDevice, y consultar el registro en cada draw costaria mas que el
++// propio override.
++inline xenos::MsaaSamples ApplyMsaaOverride(xenos::MsaaSamples guest) {
++  static const int32_t requested = [] {
++    const int32_t value = ::rex::cvar::Query<int32_t>("msaa_override");
++    if (value != 0) {
++      // Una sola linea al arrancar: deja constancia en el log del valor que se
++      // esta aplicando, para poder emparejar el log con la fila de la matriz.
++      REXLOG_INFO("NS3FB: msaa_override={} (el valor del invitado se ignora)", value);
++    }
++    return value;
++  }();
++  switch (requested) {
++    case 1:
++      return xenos::MsaaSamples::k1X;
++    case 2:
++      return xenos::MsaaSamples::k2X;
++    case 4:
++      return xenos::MsaaSamples::k4X;
++    default:
++      return guest;
++  }
++}
++
+ struct RegisterInfo {
+   enum class Type {
+     kDword,
+@@ -45,7 +88,11 @@ class RegisterFile {
+ 
+   template <typename T>
+   T Get(uint32_t reg) const {
+-    return rex::memory::Reinterpret<T>(values[reg]);
++    T value = rex::memory::Reinterpret<T>(values[reg]);
++    if constexpr (std::is_same_v<T, reg::RB_SURFACE_INFO>) {
++      value.msaa_samples = ApplyMsaaOverride(value.msaa_samples);
++    }
++    return value;
+   }
+   template <typename T>
+   T Get(Register reg) const {
+diff --git a/src/graphics/flags.cpp b/src/graphics/flags.cpp
+index e2983a4..4952a3a 100644
+--- a/src/graphics/flags.cpp
++++ b/src/graphics/flags.cpp
+@@ -16,6 +16,11 @@
+ REXCVAR_DEFINE_BOOL(gpu_allow_invalid_fetch_constants, false, "GPU",
+                     "Allow invalid fetch constants");
+ REXCVAR_DEFINE_BOOL(native_2x_msaa, true, "GPU", "Enable native 2x MSAA");
++// NS3FB: fuerza el numero de muestras del host. 0 deja el valor del invitado.
++// Se lee en RegisterFile::Get<RB_SURFACE_INFO>, que es el unico sitio del que
++// derivan el render pass, las pipelines y el shader de resolve.
++REXCVAR_DEFINE_INT32(msaa_override, 0, "GPU",
++                     "Force the host MSAA sample count (0 = guest, 1, 2 or 4)");
+ REXCVAR_DEFINE_BOOL(depth_float24_round, false, "GPU", "Round float24 depth values");
+ REXCVAR_DEFINE_BOOL(depth_float24_convert_in_pixel_shader, false, "GPU",
+                     "Convert float24 depth in pixel shader");
