@@ -1,0 +1,28 @@
+--- a/include/rex/graphics/register_file.h
++++ b/include/rex/graphics/register_file.h
+@@ -14,6 +14,7 @@
+ #include <cstdint>
+ #include <cstdlib>
+ #include <cstring>
++#include <type_traits>
+ 
+ #include <rex/assert.h>
+ #include <rex/graphics/registers.h>
+@@ -45,7 +46,16 @@
+ 
+   template <typename T>
+   T Get(uint32_t reg) const {
+-    return rex::memory::Reinterpret<T>(values[reg]);
++    T value = rex::memory::Reinterpret<T>(values[reg]);
++    // NS3FB experiment: force 1x MSAA. The guest writes 2x/4x in RB_SURFACE_INFO
++    // and every render target, render pass and resolve key downstream is derived
++    // from this single read, so overriding it here halves the render target
++    // memory traffic on mobile, where the GPU is the bottleneck.
++    // Delete ci/rexglue-force-1x-msaa.patch to restore the guest's value.
++    if constexpr (std::is_same_v<T, reg::RB_SURFACE_INFO>) {
++      value.msaa_samples = xenos::MsaaSamples::k1X;
++    }
++    return value;
+   }
+   template <typename T>
+   T Get(Register reg) const {
