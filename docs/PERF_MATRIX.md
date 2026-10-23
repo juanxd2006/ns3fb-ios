@@ -171,6 +171,29 @@ Solo evitó el **7 %** de los cierres de render pass (`kept_open=1760` de
 adjunto, y esos son inevitables. No compensa el riesgo de artefactos, que es
 justo lo que advierte el propio parche.
 
+### `03-540p`: la que se queda (medido)
+
+960x540, MSAA 4x intacto, `fbo`. iPhone 11 / A13.
+
+| Escena | FPS | GPU | Compute | Fragment | Imagen |
+|---|---|---|---|---|---|
+| menú | 27,57 – 28,33 | 22,65 – 29,38 ms | 8,68 – 12,19 | 8,92 – 10,80 | **correcta** |
+| transición | 29,89 | 17,09 ms | 7,26 | 6,05 | correcta |
+
+Contra el baseline de 1280x720 (15,75 fps / 61,09 ms): **+79 % de FPS y −57 %
+de GPU**, con la imagen correcta.
+
+El `Command Buffer CPU` bajó de 37,61 ms a 0,51–6,86 ms: menos píxeles también
+es menos trabajo de encoding.
+
+La GPU baja más que proporcionalmente a los píxeles (0,56x píxeles → 0,43x
+tiempo) porque el tráfico de EDRAM y el resolve de MSAA no escalan lineal. Es
+la razón de que 720p no entrara y 540p sobre tanto.
+
+Por eso `video_mode_width/height` quedan en 960x540 como **valor por defecto en
+el código** (`ns3fb_app.h`), y `ns3fb.toml` puede subirlos si un dispositivo
+tiene margen.
+
 ### Siguiente palanca
 
 `03-540p`: 960x540 sin tocar MSAA. 0,56x píxeles sobre el 87 % del frame, sin
