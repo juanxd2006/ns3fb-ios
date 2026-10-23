@@ -2,6 +2,7 @@
 # Para desactivar uno, quita su linea. (No se pueden borrar archivos en este
 # workspace, por eso la lista es explicita en vez de un glob.)
 rexglue-xctd-info.patch
+rexglue-pass-stats.patch
 # DESACTIVADO a peticion: abria el editor de ajustes al arrancar.
 # rexglue-launcher-menu.patch
 rexglue-trap-continue.patch
