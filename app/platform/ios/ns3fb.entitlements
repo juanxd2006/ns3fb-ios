@@ -8,5 +8,14 @@
 	     install or a paid developer account with the capability enabled do. -->
 	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
 	<true/>
+
+	<!-- Ejecucion sostenida (iOS 17+): limita el rendimiento burst desde el
+	     arranque en vez de ir al maximo y caer por throttling, que es lo que se
+	     nota como "va bien un rato y luego se arrastra".
+	     Descomentar SOLO si el perfil de aprovisionamiento incluye la
+	     capability: con Apple ID gratis no la concede y la firma falla.
+	<key>com.apple.developer.sustained-execution</key>
+	<true/>
+	-->
 </dict>
 </plist>
