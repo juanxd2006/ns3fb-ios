@@ -262,6 +262,21 @@ class Ns3fbApp : public rex::ReXApp {
     // warm phone; 8 ran dry, heard as choppy sound.
     rex::cvar::SetDefaultByName("audio_maxqframes", "16");
 
+    // Resolucion interna 960x540 en vez de 1280x720. Medido en iPhone 11 / A13
+    // con el Metal HUD, mismo escenario de menu:
+    //   1280x720 -> 61,09 ms de GPU, 15,75 fps
+    //    960x540 -> 22,65-29,38 ms, 27,57-28,33 fps, imagen correcta
+    // Son 0,56x pixeles pero la GPU baja mas de la mitad, porque el coste del
+    // resolve de MSAA y del trafico de EDRAM no escala linealmente. El
+    // presenter escala a la pantalla del telefono; ns3fb.toml puede subirlo
+    // por encima si el dispositivo tiene margen.
+    //
+    // NO bajar el MSAA para ganar rendimiento: se probo (msaa_override = 2) y
+    // corrompe la imagen, porque la EDRAM emulada esta atada al layout de 4x
+    // del invitado. Ver docs/PERF_MATRIX.md.
+    rex::cvar::SetDefaultByName("video_mode_width", "960");
+    rex::cvar::SetDefaultByName("video_mode_height", "540");
+
     // Rendimiento (perfil medido en iPhone 11 / A13, ~15 fps en el menu antes).
     //
     // Anisotropico a 3x por defecto: cuesta ancho de banda y a 720p no se nota.
