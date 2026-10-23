@@ -46,3 +46,9 @@
 # Despues: VK_ERROR_DEVICE_LOST (Metal perdio el dispositivo).
 0x82261CA8
 0x82868BA0
+
+# --- Build 2026-10-22 19:46: render real (bola roja) + audio ----------------
+# Al pulsar A: estas dos se ejecutaron como no-op y una devolvio 0, provocando
+# "access violation: read of guest 0x00000004".
+0x828DE618
+0x82768360
