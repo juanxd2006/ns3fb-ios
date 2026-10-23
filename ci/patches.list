@@ -3,8 +3,16 @@
 # workspace, por eso la lista es explicita en vez de un glob.)
 rexglue-xctd-info.patch
 rexglue-pass-stats.patch
-# DESACTIVADO: kept_open=0 en dispositivo (todas las barreras resultan ser de
-# imagen), no aporta nada. Se deja el archivo como referencia.
+# v2: mantiene el render pass abierto cuando la barrera NO toca un adjunto del
+# pase. Se activa en el dispositivo creando Documents/keep_pass_open.txt; sin
+# ese archivo el comportamiento es identico al de antes.
+rexglue-keep-pass-open-v2.patch
+# DESACTIVADO -- y el motivo anterior era erroneo. v1 solo mantenia el pase
+# abierto si TODAS las barreras pendientes eran de buffer
+# (pending_barriers_image_memory_barriers_.empty()); en Storm 3 todas son de
+# imagen, asi que la condicion era siempre falsa y kept_open se quedaba en 0.
+# Se midio una puerta cerrada y se concluyo que la habitacion no existia.
+# v2 corrige el gate mirando el layout destino, no el tipo de barrera.
 # rexglue-keep-pass-open.patch
 # DESACTIVADO a peticion: abria el editor de ajustes al arrancar.
 # rexglue-launcher-menu.patch
