@@ -62,6 +62,13 @@ class Ns3fbApp : public rex::ReXApp {
     // antes de que arranque el runtime.
     setenv("MVK_CONFIG_PRESENT_WITH_COMMAND_BUFFER", "1", 1);
 
+    // iOS rechaza cualquier envio a la GPU mientras la app esta en segundo
+    // plano (kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted),
+    // MoltenVK pierde el VkDevice y la imagen queda negra para siempre. Con
+    // esto MoltenVK recrea el dispositivo al volver a primer plano en vez de
+    // quedarse muerto.
+    setenv("MVK_CONFIG_RESUME_LOST_DEVICE", "1", 1);
+
     const char* home = std::getenv("HOME");
     if (!home || !home[0]) {
       return;
