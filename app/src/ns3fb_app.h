@@ -15,6 +15,8 @@
 #include <climits>
 #include <cstdlib>
 #include <filesystem>
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <mach-o/dyld.h>
 #include <rex/cvar.h>
@@ -68,6 +70,44 @@ class Ns3fbApp : public rex::ReXApp {
     // esto MoltenVK recrea el dispositivo al volver a primer plano en vez de
     // quedarse muerto.
     setenv("MVK_CONFIG_RESUME_LOST_DEVICE", "1", 1);
+
+    // Ajustes de MoltenVK desde un archivo editable en la app Archivos, para
+    // poder hacer A/B de cada opcion sin recompilar:
+    //   Documents/mvk.txt  ->  lineas "MVK_CONFIG_XXX=valor"
+    // Se aplica todo antes de crear la instancia (MoltenVK lee las variables
+    // una sola vez, al inicializarse).
+    {
+      const char* home_env = std::getenv("HOME");
+      if (home_env && *home_env) {
+        const std::filesystem::path mvk_path =
+            std::filesystem::path(home_env) / "Documents" / "mvk.txt";
+        std::ifstream mvk_file(mvk_path);
+        std::string line;
+        while (std::getline(mvk_file, line)) {
+          const auto hash = line.find('#');
+          if (hash != std::string::npos) {
+            line.erase(hash);
+          }
+          const auto eq = line.find('=');
+          if (eq == std::string::npos) {
+            continue;
+          }
+          std::string key = line.substr(0, eq);
+          std::string value = line.substr(eq + 1);
+          const auto trim = [](std::string& v) {
+            const auto not_space = [](int c) { return !std::isspace(c); };
+            v.erase(v.begin(), std::find_if(v.begin(), v.end(), not_space));
+            v.erase(std::find_if(v.rbegin(), v.rend(), not_space).base(), v.end());
+          };
+          trim(key);
+          trim(value);
+          if (key.rfind("MVK_CONFIG_", 0) == 0 && !value.empty()) {
+            setenv(key.c_str(), value.c_str(), 1);
+            REXLOG_INFO("MoltenVK override from mvk.txt: {}={}", key, value);
+          }
+        }
+      }
+    }
 
     const char* home = std::getenv("HOME");
     if (!home || !home[0]) {
