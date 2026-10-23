@@ -52,9 +52,16 @@ workflows:
     scripts:
       - name: Toolchain
         script: |
+          set -e
           xcodebuild -version
-          brew install ninja || true
           cmake --version
+          # Esta imagen no trae ninja de serie y 00-fetch-sdk.sh lo exige.
+          if ! command -v ninja >/dev/null 2>&1; then
+            echo "ninja no encontrado, instalando con Homebrew"
+            brew install ninja
+          fi
+          command -v ninja
+          ninja --version
           df -h /
 
       - name: Stage game executable
@@ -119,6 +126,19 @@ workflows:
         - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/install/ios-arm64
         - $CM_BUILD_DIR/thirdparty/rexglue-sdk-ios.patch
     scripts:
+      - name: Toolchain
+        script: |
+          set -e
+          xcodebuild -version
+          cmake --version
+          # Esta imagen no trae ninja de serie y 00-fetch-sdk.sh lo exige.
+          if ! command -v ninja >/dev/null 2>&1; then
+            echo "ninja no encontrado, instalando con Homebrew"
+            brew install ninja
+          fi
+          command -v ninja
+          ninja --version
+          df -h /
       - name: Build ReXGlue SDK (macOS + iOS)
         script: |
           chmod +x scripts/*.sh
