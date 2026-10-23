@@ -47,6 +47,36 @@ if [ -n "$CACHE_OUT" ] && [ ! -d "$SDK/out" ]; then
   echo "==> Restored cached out/ into the fresh clone"
 fi
 
+# --- Version de MoltenVK -----------------------------------------------------
+# El SDK fija un commit concreto de thirdparty/moltenvk (1.4.1 en el momento de
+# escribir esto). Un punto release posterior trae correcciones del traductor
+# SPIR-V -> MSL que pueden arreglar el fallo que perseguimos: los shaders de la
+# ruta fsi (fragment shader interlock) no compilan y el servicio XPC del
+# compilador de Metal se cae con XPC_ERROR_CONNECTION_INTERRUPTED, con lo que
+# despues fallan TODAS las pipelines del frame.
+#
+# MVK_VERSION=vX.Y.Z lo sube sin tocar el SDK. Vacio = respetar el commit del SDK.
+# Al cambiar la version cambia la huella de la cache, asi que se recompila.
+MVK_VERSION="${MVK_VERSION:-v1.4.2}"
+MVK_DIR="$SDK/thirdparty/moltenvk"
+if [ -n "$MVK_VERSION" ] && [ -e "$MVK_DIR/.git" ]; then
+  CURRENT_MVK="$(git -C "$MVK_DIR" describe --tags --always 2>/dev/null || echo unknown)"
+  if [ "$CURRENT_MVK" != "$MVK_VERSION" ]; then
+    echo "==> MoltenVK: $CURRENT_MVK -> $MVK_VERSION"
+    if ! git -C "$MVK_DIR" fetch -q origin "refs/tags/$MVK_VERSION:refs/tags/$MVK_VERSION" 2>/dev/null; then
+      git -C "$MVK_DIR" fetch -q --tags origin
+    fi
+    git -C "$MVK_DIR" checkout -q "tags/$MVK_VERSION"
+    # SPIRV-Cross, SPIRV-Tools y Vulkan-Headers internos de MoltenVK van fijados
+    # por su ExternalRevisions/. Sin esto se compilaria 1.4.2 contra el
+    # SPIRV-Cross de 1.4.1, que es justo la pieza que traduce los shaders.
+    git -C "$MVK_DIR" submodule update --init --recursive -q
+    echo "==> MoltenVK now at $(git -C "$MVK_DIR" describe --tags --always)"
+  else
+    echo "==> MoltenVK already at $MVK_VERSION"
+  fi
+fi
+
 if [ ! -f "$PATCH" ]; then
   echo "==> Downloading the iOS patch"
   curl -fsSL "$PATCH_URL" -o "$PATCH"
@@ -90,7 +120,7 @@ done
 # Huella de los parches + version del SDK. Si cambia, la cache de out/ no sirve
 # y hay que recompilar: sin esto el guard reutilizaria dylibs sin los parches.
 SDK_REV="$(git -C "$SDK" rev-parse HEAD 2>/dev/null || echo unknown)"
-FINGERPRINT="$(cat "$PATCH" 2>/dev/null | shasum -a 256 | awk '{print $1}')-$SDK_REV-$TRAP_APPLIED-$EXTRA_FINGERPRINT"
+FINGERPRINT="$(cat "$PATCH" 2>/dev/null | shasum -a 256 | awk '{print $1}')-$SDK_REV-$TRAP_APPLIED-mvk-${MVK_VERSION:-sdk}-$EXTRA_FINGERPRINT"
 STAMP="$SDK/out/.build-fingerprint"
 
 # `cmake --preset` resolves CMakePresets.json from the *current working
