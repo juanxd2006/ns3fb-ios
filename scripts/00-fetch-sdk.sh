@@ -68,9 +68,11 @@ fi
 # desactivar uno, basta con borrar el archivo del repo.
 TRAP_APPLIED=0
 EXTRA_FINGERPRINT=""
-for extra in "$ROOT"/ci/rexglue-*.patch; do
-  [ -e "$extra" ] || continue
-  name="$(basename "$extra")"
+PATCH_LIST="$ROOT/ci/patches.list"
+[ -f "$PATCH_LIST" ] || { echo "falta $PATCH_LIST" >&2; exit 1; }
+for name in $(grep -v '^#' "$PATCH_LIST" | tr -d ' \r'); do
+  extra="$ROOT/ci/$name"
+  [ -e "$extra" ] || { echo "parche listado pero ausente: $name" >&2; exit 1; }
   if git -C "$SDK" apply --check "$extra" 2>/dev/null; then
     echo "==> Applying $name"
     git -C "$SDK" apply "$extra"
