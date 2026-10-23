@@ -274,6 +274,38 @@ class Ns3fbApp : public rex::ReXApp {
     // bloquear el frame. Cuesta algun efecto en el primer instante.
     rex::cvar::SetDefaultByName("async_shader_compilation", "true");
 
+    // Marcadores de cvars del runtime. SetFlagByName va POR ENCIMA de
+    // ns3fb.toml, asi que sirven para A/B sin editar el archivo.
+    {
+      struct CvarMarker {
+        const char* file;
+        const char* name;
+        const char* value;
+      };
+      static constexpr CvarMarker kCvarMarkers[] = {
+          // Arregla las pantallas negras: con async_shader_compilation activo,
+          // un frame que usa un pipeline de relleno NO se presenta.
+          {"no_async_present.txt", "async_shader_compilation", "false"},
+          {"no_async_present.txt", "vulkan_async_skip_incomplete_frames", "false"},
+          // Ruta FSI: emula la EDRAM en el pixel shader en vez de con compute.
+          // Cambia el reparto entre Compute GPU y Fragment GPU.
+          {"rtt_fsi.txt", "render_target_path_vulkan", "fsi"},
+          // Desactivar el salto de frames incompletos por separado.
+          {"no_skip_frames.txt", "vulkan_async_skip_incomplete_frames", "false"},
+      };
+      for (const auto& marker : kCvarMarkers) {
+        std::error_code marker_ec;
+        if (std::filesystem::exists(
+                std::filesystem::path(home) / "Documents" / marker.file, marker_ec)) {
+          if (rex::cvar::SetFlagByName(marker.name, marker.value)) {
+            REXLOG_INFO("cvar override (marker {}): {}={}", marker.file, marker.name, marker.value);
+          } else {
+            REXLOG_WARN("cvar override failed (marker {}): {}", marker.file, marker.name);
+          }
+        }
+      }
+    }
+
     REXLOG_INFO("iOS paths: game={} config={}", paths.game_data_root.string(),
                 paths.config_path.string());
   }
