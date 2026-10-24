@@ -258,6 +258,21 @@ class Ns3fbApp : public rex::ReXApp {
     // the CPU, as Xenia does by default. Without it, depth-only clears were
     // assumed to cover the whole EDRAM, wrapping over the colour image.
     rex::cvar::SetDefaultByName("execute_unclipped_draw_vs_on_cpu", "true");
+    // Diagnostico del 3D negro, EN CURSO: este atajo resuelve del render target
+    // del host a memoria del invitado sin volcar antes los render targets a la
+    // EDRAM, y en este port (Vulkan -> MoltenVK -> Metal) hay algo en ese camino
+    // que no entrega el contenido.
+    //
+    // Medido en dispositivo con el atajo DESACTIVADO: el modo Practica se ve
+    // completo (~29 fps). El modo VS Battle SIGUE NEGRO, asi que este atajo no
+    // es la causa raiz del VS: o hay una segunda causa, o el VS usa otro camino.
+    // Se deja en false porque con true el Practica salia negro y no cuesta fps.
+    //
+    // Para retomarlo: comparar los logs de Practica y de VS Battle con la
+    // instrumentacion NS3FB-RANGE / NS3FB-TEX / NS3FB-MEM (after=submit) y ver
+    // en que se diferencian. NO volver a poner true sin comprobar que
+    // NS3FB-RES-SUM.direct_ok sube y la imagen se mantiene.
+    rex::cvar::SetDefaultByName("direct_host_resolve", "false");
     // 16 queued audio frames (~85 ms) ride out scheduling hiccups on a busy or
     // warm phone; 8 ran dry, heard as choppy sound.
     rex::cvar::SetDefaultByName("audio_maxqframes", "16");
