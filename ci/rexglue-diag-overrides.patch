@@ -1,6 +1,6 @@
 --- a/include/rex/graphics/flags.h
 +++ b/include/rex/graphics/flags.h
-@@ -43,6 +43,12 @@
+@@ -43,6 +43,17 @@
  // MSAA del host forzado desde la configuracion: 0 = lo que pida el invitado,
  // 1 / 2 / 4 = numero de muestras forzado. Ver register_file.h.
  REXCVAR_DECLARE(int32_t, msaa_override);
@@ -10,12 +10,17 @@
 +// Documents/ztest_off.txt y blend_off.txt.
 +REXCVAR_DECLARE(bool, ztest_off);
 +REXCVAR_DECLARE(bool, blend_off);
++// Interruptor maestro de toda la instrumentacion NS3FB-* (draws, pases, estado,
++// rangos EDRAM, texturas, pixeles). Apagado por defecto: con el encendido el log
++// pasa de 200 lineas por segundo y el juego se vuelve injugable.
++// Marcador en el dispositivo: Documents/diag_on.txt
++REXCVAR_DECLARE(bool, ns3fb_diag);
  REXCVAR_DECLARE(bool, snorm16_render_target_full_range);
  REXCVAR_DECLARE(bool, mrt_edram_used_range_clamp_to_min);
  REXCVAR_DECLARE(bool, direct_host_resolve);
 --- a/src/graphics/flags.cpp
 +++ b/src/graphics/flags.cpp
-@@ -21,6 +21,13 @@
+@@ -21,6 +21,17 @@
  // derivan el render pass, las pipelines y el shader de resolve.
  REXCVAR_DEFINE_INT32(msaa_override, 0, "GPU",
                       "Force the host MSAA sample count (0 = guest, 1, 2 or 4)");
@@ -26,6 +31,10 @@
 +                    "Force the depth test off in all draws (3D black diagnosis)");
 +REXCVAR_DEFINE_BOOL(blend_off, false, "GPU",
 +                    "Force blending off in all draws (3D black diagnosis)");
++// NS3FB: interruptor maestro del diagnostico. Apagado = el emulador no escribe
++// ninguna linea NS3FB-* por draw (solo NS3FB-CONFIG al arrancar).
++REXCVAR_DEFINE_BOOL(ns3fb_diag, false, "GPU",
++                    "Enable the NS3FB-* diagnostic logging (very verbose)");
  REXCVAR_DEFINE_BOOL(depth_float24_round, false, "GPU", "Round float24 depth values");
  REXCVAR_DEFINE_BOOL(depth_float24_convert_in_pixel_shader, false, "GPU",
                      "Convert float24 depth in pixel shader");
