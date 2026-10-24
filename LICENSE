@@ -19,34 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-================================================================================
-ALCANCE DE ESTA LICENCIA / SCOPE
-================================================================================
-
-Esta licencia cubre UNICAMENTE el codigo y la documentacion originales de este
-repositorio: los scripts de scripts/, la capa de aplicacion de app/src/ y
-app/platform/, las herramientas de tools/, los documentos de docs/ y los
-parches de ci/ en tanto que modificaciones.
-
-NO cubre, y no puede cubrir:
-
-  - El juego Naruto Shippuden: Ultimate Ninja Storm 3 Full Burst, ni ninguna
-    parte de el (codigo, datos, audio, video, texturas, marcas). Los derechos
-    son de Bandai Namco / CyberConnect2 y sus licenciantes.
-  - El codigo generado por scripts/01-codegen.sh, que es una obra derivada de
-    tu propio default.xex y por tanto queda bajo la licencia de ese ejecutable,
-    no bajo esta.
-  - rexglue-sdk (https://github.com/rexglue/rexglue-sdk), bajo su propia
-    licencia. Los parches de ci/rexglue-*.patch son modificaciones de ese
-    proyecto y se distribuyen bajo los terminos de su licencia.
-  - El parche de iOS de MCX360-EDITION
-    (https://github.com/DevZer0D4Y/MCX360-EDITION), BSD-3-Clause. Este repo lo
-    descarga en tiempo de build, no lo redistribuye.
-  - Xenia, XenonRecomp, XenosRecomp, MoltenVK, SDL, FFmpeg, AMD FidelityFX e
-    ImGui, cada uno bajo su licencia.
-
-Ver CREDITS.md para la atribucion completa.
-
-Este proyecto no incluye ni distribuye contenido del juego. Necesitas tu propia
-copia original. No es publicable en la App Store.
