@@ -36,6 +36,10 @@ rexglue-msaa-override.patch
 # corrompia la imagen; ademas no se podia desactivar sin recompilar, asi que
 # nunca se pudo medir de verdad. Se conserva como referencia.
 # rexglue-force-1x-msaa.patch
+# Overrides de diagnostico del 3D negro: cvars ztest_off y blend_off, aplicados
+# al leer RB_DEPTHCONTROL y RB_BLENDCONTROL (ver register_file.h). Marcadores en
+# el dispositivo: Documents/ztest_off.txt y Documents/blend_off.txt.
+rexglue-diag-overrides.patch
 # Estado del invitado por tipo de pase (NS3FB-STATE, NS3FB-TGT) y trazado de
 # resolves (NS3FB-RES). Responde al 3D negro sin captura de GPU: si la mascara
 # de color es 0, si el pase nunca se resuelve, o si escribe en un rango EDRAM
