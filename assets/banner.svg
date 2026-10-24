@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="NS3FB iOS — port nativo de Xbox 360 a iPhone">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1020"/>
+      <stop offset="55%" stop-color="#141a33"/>
+      <stop offset="100%" stop-color="#0a0f1e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="50%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#f472b6"/>
+    </linearGradient>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.55"/>
+    </linearGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#ffffff" stroke-opacity="0.045" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="300" fill="url(#bg)"/>
+  <rect width="1200" height="300" fill="url(#grid)"/>
+
+  <!-- Barra de acento -->
+  <rect x="0" y="0" width="1200" height="4" fill="url(#accent)"/>
+
+  <!-- Marca: cubo isometrico (motivo de recompilacion) -->
+  <g transform="translate(96 96)" fill="none" stroke="url(#accent)" stroke-width="2.5" stroke-linejoin="round">
+    <path d="M54 12 L96 36 L96 84 L54 108 L12 84 L12 36 Z" stroke-opacity="0.95"/>
+    <path d="M12 36 L54 60 L96 36" stroke-opacity="0.75"/>
+    <path d="M54 60 L54 108" stroke-opacity="0.75"/>
+  </g>
+
+  <!-- Titulo -->
+  <text x="228" y="132" font-family="'SF Pro Display',-apple-system,'Helvetica Neue',Arial,sans-serif"
+        font-size="72" font-weight="700" letter-spacing="-2" fill="url(#fade)">NS3FB iOS</text>
+
+  <!-- Subtitulo -->
+  <text x="230" y="176" font-family="'SF Pro Text',-apple-system,'Helvetica Neue',Arial,sans-serif"
+        font-size="24" font-weight="400" fill="#c7d2fe" fill-opacity="0.9">
+    Port nativo de Xbox 360 a iPhone
+  </text>
+
+  <!-- Linea de stack -->
+  <text x="230" y="222" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace"
+        font-size="16" fill="#94a3b8" letter-spacing="0.5">
+    PowerPC → ARM64 · ReXGlue · Vulkan → MoltenVK · ~30 fps @ 960×540
+  </text>
+
+  <!-- Aviso -->
+  <text x="230" y="256" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace"
+        font-size="13" fill="#64748b" letter-spacing="0.5">
+    No incluye archivos del juego · trae tu propio default.xex
+  </text>
+
+  <!-- Marca de agua -->
+  <text x="1104" y="268" text-anchor="end" font-family="ui-monospace,Menlo,monospace"
+        font-size="12" fill="#475569" letter-spacing="2">v0.1</text>
+</svg>
