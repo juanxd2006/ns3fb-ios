@@ -310,7 +310,17 @@
    // textures.
 --- a/src/graphics/vulkan/render_target_cache.cpp
 +++ b/src/graphics/vulkan/render_target_cache.cpp
-@@ -1124,6 +1124,120 @@
+@@ -1113,6 +1113,9 @@
+ }
+ 
+ void VulkanRenderTargetCache::CompletedSubmissionUpdated() {
++  // NS3FB: aqui la GPU ya termino, asi que este es el unico punto en el que
++  // leer la memoria del invitado da el contenido real del resolve.
++  Ns3fbScanPendingResolvedRanges();
+   if (transfer_vertex_buffer_pool_) {
+     transfer_vertex_buffer_pool_->Reclaim(command_processor_.GetCompletedSubmission());
+   }
+@@ -1124,6 +1127,149 @@
    }
  }
  
@@ -318,51 +328,45 @@
 +//
 +// El resolve deja los pixeles en memoria del invitado y esa memoria se puede
 +// leer desde la CPU: es lo mas parecido a una captura de GPU que se puede hacer
-+// sin un Mac. Se escanea el rango que escribio la LLAMADA ANTERIOR (para dar
-+// tiempo a que la GPU termine) y se resume.
++// sin un Mac.
 +//
-+//   nz=0    el contenido es negro de verdad: el fallo esta en el rasterizado o
-+//           en el pixel shader, no en quien lo lee despues.
++// IMPORTANTE, y es lo que se corrige aqui: Xenia acumula los comandos en un
++// command buffer diferido y los envia al final del frame. Escanear dentro de
++// Resolve() lee la memoria ANTES de que la copia se ejecute, asi que siempre
++// devolvia ceros y no valia como medida. Por eso el rango se ENCOLA en
++// Resolve() y se escanea en CompletedSubmissionUpdated(), que es el punto en el
++// que la GPU ya termino.
++//
++//   nz=0    el contenido es negro de verdad: el fallo esta en el rasterizado, en
++//           el pixel shader o en la copia del resolve.
 +//   nz>0    hay pixeles con color y el fallo esta en quien muestrea esa memoria
 +//           (el pase de composicion o el cache de texturas).
-+//
-+// Se muestrea (hasta 4096 pixels, con paso) en vez de recorrer los 1,2 MB
-+// enteros: basta para distinguir negro de no negro y no cuesta nada apreciable.
 +namespace {
 +
-+uint32_t g_ns3fb_mem_start = 0;
-+uint32_t g_ns3fb_mem_length = 0;
-+uint32_t g_ns3fb_mem_cbase = 0;
-+uint32_t g_ns3fb_mem_dbase = 0;
-+uint32_t g_ns3fb_mem_w8 = 0;
-+uint32_t g_ns3fb_mem_h8 = 0;
++constexpr size_t kNs3fbPendingRanges = 8;
++
++struct Ns3fbPendingRange {
++  uint32_t start;
++  uint32_t length;
++  uint32_t color_base;
++  uint32_t depth_base;
++  uint32_t width_div_8;
++  uint32_t height_div_8;
++};
++
++Ns3fbPendingRange g_ns3fb_pending[kNs3fbPendingRanges] = {};
++size_t g_ns3fb_pending_count = 0;
++uint64_t g_ns3fb_pending_dropped = 0;
++// Memoria del invitado, tomada del parametro de Resolve() para poder escanear
++// desde CompletedSubmissionUpdated(), que no la recibe.
++const memory::Memory* g_ns3fb_memory = nullptr;
 +uint32_t g_ns3fb_mem_sig[16] = {};
 +uint64_t g_ns3fb_mem_count[16] = {};
 +size_t g_ns3fb_mem_sig_count = 0;
 +
-+}  // namespace
-+
-+static void Ns3fbRememberResolvedRange(uint32_t start, uint32_t length, uint32_t color_base,
-+                                       uint32_t depth_base, uint32_t width_div_8,
-+                                       uint32_t height_div_8) {
-+  g_ns3fb_mem_start = start;
-+  g_ns3fb_mem_length = length;
-+  g_ns3fb_mem_cbase = color_base;
-+  g_ns3fb_mem_dbase = depth_base;
-+  g_ns3fb_mem_w8 = width_div_8;
-+  g_ns3fb_mem_h8 = height_div_8;
-+}
-+
-+static void Ns3fbScanResolvedRange(const memory::Memory& memory) {
-+  if (!g_ns3fb_mem_length) {
-+    return;
-+  }
-+  const uint32_t start = g_ns3fb_mem_start;
-+  const uint32_t length = g_ns3fb_mem_length;
-+  g_ns3fb_mem_length = 0;
-+
-+  const uint32_t signature = g_ns3fb_mem_cbase * 73856093u ^ g_ns3fb_mem_dbase * 19349663u ^
-+                             g_ns3fb_mem_w8 * 83492791u ^ g_ns3fb_mem_h8 * 2654435761u;
++void Ns3fbScanOneRange(const memory::Memory& memory, const Ns3fbPendingRange& range) {
++  const uint32_t signature = range.color_base * 73856093u ^ range.depth_base * 19349663u ^
++                             range.width_div_8 * 83492791u ^ range.height_div_8 * 2654435761u;
 +  size_t slot = g_ns3fb_mem_sig_count;
 +  for (size_t i = 0; i < g_ns3fb_mem_sig_count; ++i) {
 +    if (g_ns3fb_mem_sig[i] == signature) {
@@ -382,13 +386,13 @@
 +    return;
 +  }
 +
-+  const uint8_t* base = memory.TranslatePhysical(start);
++  const uint8_t* base = memory.TranslatePhysical(range.start);
 +  if (!base) {
 +    REXLOG_INFO("NS3FB-MEM c_base={} d_base={} start=0x{:08X} len=0x{:X} unmapped=1",
-+                g_ns3fb_mem_cbase, g_ns3fb_mem_dbase, start, length);
++                range.color_base, range.depth_base, range.start, range.length);
 +    return;
 +  }
-+  uint32_t step = length / 4096u;
++  uint32_t step = range.length / 4096u;
 +  if (step < 4u) {
 +    step = 4u;
 +  }
@@ -398,19 +402,19 @@
 +  uint32_t mn = 255;
 +  uint32_t mx = 0;
 +  uint32_t sample[4] = {0, 0, 0, 0};
-+  for (uint32_t offset = 0; offset + 4u <= length; offset += step) {
-+    const uint8_t* p = base + offset;
-+    const uint32_t px = uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) |
-+                        (uint32_t(p[3]) << 24);
++  for (uint32_t offset = 0; offset + 4u <= range.length; offset += step) {
++    const uint8_t* px_ptr = base + offset;
++    const uint32_t px = uint32_t(px_ptr[0]) | (uint32_t(px_ptr[1]) << 8) |
++                        (uint32_t(px_ptr[2]) << 16) | (uint32_t(px_ptr[3]) << 24);
 +    if (px) {
 +      ++nonzero;
 +    }
-+    sum += p[0];
-+    if (p[0] < mn) {
-+      mn = p[0];
++    sum += px_ptr[0];
++    if (px_ptr[0] < mn) {
++      mn = px_ptr[0];
 +    }
-+    if (p[0] > mx) {
-+      mx = p[0];
++    if (px_ptr[0] > mx) {
++      mx = px_ptr[0];
 +    }
 +    if (pixels < 4) {
 +      sample[pixels] = px;
@@ -421,28 +425,52 @@
 +    return;
 +  }
 +  REXLOG_INFO(
-+      "NS3FB-MEM n={} c_base={} d_base={} w8={} h8={} start=0x{:08X} len=0x{:X} px={} nz={} "
-+      "pct={} min={} max={} mean={} s0=0x{:08X} s1=0x{:08X} s2=0x{:08X} s3=0x{:08X}",
-+      seen, g_ns3fb_mem_cbase, g_ns3fb_mem_dbase, g_ns3fb_mem_w8, g_ns3fb_mem_h8, start, length,
-+      pixels, nonzero, uint32_t(nonzero * 100u / pixels), mn, mx, uint32_t(sum / pixels),
-+      sample[0], sample[1], sample[2], sample[3]);
++      "NS3FB-MEM n={} after=submit c_base={} d_base={} w8={} h8={} start=0x{:08X} len=0x{:X} "
++      "px={} nz={} pct={} min={} max={} mean={} s0=0x{:08X} s1=0x{:08X} s2=0x{:08X} s3=0x{:08X}",
++      seen, range.color_base, range.depth_base, range.width_div_8, range.height_div_8, range.start,
++      range.length, pixels, nonzero, uint32_t(nonzero * 100u / pixels), mn, mx,
++      uint32_t(sum / pixels), sample[0], sample[1], sample[2], sample[3]);
++}
++
++void Ns3fbScanPendingResolvedRanges() {
++  if (!g_ns3fb_memory) {
++    return;
++  }
++  const memory::Memory& memory = *g_ns3fb_memory;
++  for (size_t i = 0; i < g_ns3fb_pending_count; ++i) {
++    Ns3fbScanOneRange(memory, g_ns3fb_pending[i]);
++  }
++  g_ns3fb_pending_count = 0;
++  if (g_ns3fb_pending_dropped) {
++    REXLOG_INFO("NS3FB-MEM dropped={} (mas resolves por envio que huecos de escaneo)",
++                g_ns3fb_pending_dropped);
++    g_ns3fb_pending_dropped = 0;
++  }
++}
++
++}  // namespace
++
++static void Ns3fbQueueResolvedRange(const memory::Memory& memory, uint32_t start, uint32_t length,
++                                    uint32_t color_base, uint32_t depth_base, uint32_t width_div_8,
++                                    uint32_t height_div_8) {
++  g_ns3fb_memory = &memory;
++  if (g_ns3fb_pending_count >= kNs3fbPendingRanges) {
++    ++g_ns3fb_pending_dropped;
++    return;
++  }
++  Ns3fbPendingRange& range = g_ns3fb_pending[g_ns3fb_pending_count++];
++  range.start = start;
++  range.length = length;
++  range.color_base = color_base;
++  range.depth_base = depth_base;
++  range.width_div_8 = width_div_8;
++  range.height_div_8 = height_div_8;
 +}
 +
  bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
                                        VulkanSharedMemory& shared_memory,
                                        VulkanTextureCache& texture_cache,
-@@ -1131,6 +1245,10 @@
-   written_address_out = 0;
-   written_length_out = 0;
- 
-+  // NS3FB: escanear el rango que resolvio la llamada anterior (ya con la GPU
-+  // terminada) antes de tocar nada del estado.
-+  Ns3fbScanResolvedRange(memory);
-+
-   bool draw_resolution_scaled = IsDrawResolutionScaled();
- 
-   draw_util::ResolveInfo resolve_info;
-@@ -1140,6 +1258,133 @@
+@@ -1140,6 +1286,136 @@
      return false;
    }
  
@@ -520,8 +548,11 @@
 +          ns3fb_dst_start, ns3fb_dst_len, ns3fb_original, ns3fb_copy_control, ns3fb_clr_flags);
 +    }
 +    if (ns3fb_res_total % 1200 == 0) {
-+      REXLOG_INFO("NS3FB-RES-SUM n={} signatures={} discarded={}", ns3fb_res_total,
-+                  ns3fb_res_sig_size, ns3fb_res_discarded);
++      REXLOG_INFO("NS3FB-RES-SUM n={} signatures={} discarded={} direct_attempt={} "
++                  "direct_ok={} direct_fallback={}",
++                  ns3fb_res_total, ns3fb_res_sig_size, ns3fb_res_discarded,
++                  direct_resolve_attempt_count_, direct_resolve_success_count_,
++                  direct_resolve_fallback_count_);
 +    }
 +
 +    // Clear real: valor y rango EDRAM exacto.
@@ -576,13 +607,13 @@
    // Nothing to copy/clear.
    if (!resolve_info.coordinate_info.width_div_8 || !resolve_info.height_div_8) {
      return true;
-@@ -1290,6 +1535,14 @@
+@@ -1290,6 +1566,14 @@
                                              resolve_info.copy_dest_extent_length);
            written_address_out = resolve_info.copy_dest_extent_start;
            written_length_out = resolve_info.copy_dest_extent_length;
 +
-+          // NS3FB: recordar el rango para escanearlo en la proxima llamada.
-+          Ns3fbRememberResolvedRange(
++          // NS3FB: encolar el rango para escanearlo cuando la GPU haya terminado.
++          Ns3fbQueueResolvedRange(memory,
 +              resolve_info.copy_dest_extent_start, resolve_info.copy_dest_extent_length,
 +              uint32_t(resolve_info.color_edram_info.base_tiles),
 +              uint32_t(resolve_info.depth_edram_info.base_tiles),
