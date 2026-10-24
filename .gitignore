@@ -16,3 +16,11 @@ thirdparty/
 
 # Banco de medicion A/B (generado por scripts/perf-matrix.sh)
 perf/
+
+# El ejecutable del juego no se versiona NUNCA (repo público).
+# Ver ci/game/README.md
+ci/game/*.xex
+ci/game/default.xex
+ci/game/*.iso
+ci/game/data/
+ci/game/datafb/
