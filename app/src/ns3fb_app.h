@@ -374,6 +374,10 @@ class Ns3fbApp : public rex::ReXApp {
         // UNO A UNO, nunca los dos a la vez: juntos no dicen cual arreglo.
         {"ztest_off.txt", "ztest_off", "true"},
         {"blend_off.txt", "blend_off", "true"},
+        // Interruptor de TODA la instrumentacion NS3FB-*. Apagada por defecto:
+        // encendida escribe mas de 200 lineas por segundo y el juego deja de
+        // responder a los botones. Se enciende solo para diagnosticar.
+        {"diag_on.txt", "ns3fb_diag", "true"},
     };
     // Volcado del estado efectivo.
     //
@@ -405,7 +409,7 @@ class Ns3fbApp : public rex::ReXApp {
     REXLOG_INFO(
         "NS3FB-CONFIG msaa={} video={}x{} rt_path={} occl={} gamma16={} snorm16={} "
         "aniso={} async={} unclipped_cpu={} letterbox={} fsi_mask={} direct_resolve={} "
-        "zoff={} blendoff={}",
+        "zoff={} blendoff={} diag={}",
         q_i("msaa_override"), q_i("video_mode_width"), q_i("video_mode_height"),
         rex::cvar::Query<std::string>("render_target_path_vulkan"), q_b("occlusion_query_enable"),
         q_b("gamma_render_target_as_unorm16"), q_b("snorm16_render_target_full_range"),
@@ -414,7 +418,7 @@ class Ns3fbApp : public rex::ReXApp {
         q_b("fsi_sample_mask_from_sample_id"), q_b("direct_host_resolve"),
         // Los dos overrides de diagnostico: si no son 1, los marcadores no se
         // aplicaron y el build no sirve para decidir nada.
-        q_b("ztest_off"), q_b("blend_off"));
+        q_b("ztest_off"), q_b("blend_off"), q_b("ns3fb_diag"));
   }
 #endif
 };
