@@ -286,3 +286,17 @@
 0x825a7d28
 0x825a7d38
 0x8269ecf8
+
+# --- 2026-10-24 02:34-02:42: sesion larga (16 min, jugable de inicio a fin) ---
+# Solo 4 traps en toda la sesion, y cero errores. A diferencia de las anteriores,
+# estas NO son thunks de vtable: son puntos de entrada dentro de funciones mas
+# grandes (el juego las llama por puntero, pero el codegen solo conoce el inicio
+# de la funcion que las contiene, asi que el dispatcher no las resuelve).
+#   02:34:24  0x8262C590   (empieza con bctr: trampolin de retorno)
+#   02:40:44  0x82272CF8
+#   02:42:39  0x825A7258
+#   02:42:49  0x825A73A8
+0x8262C590
+0x82272CF8
+0x825A7258
+0x825A73A8
