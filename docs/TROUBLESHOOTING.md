@@ -153,6 +153,14 @@ Sube `audio_maxqframes` a 24–32. Baja si la latencia molesta.
 
 > **ESTADO: en curso, con un avance medido.**
 >
+> **El diagnóstico está APAGADO por defecto.** Para volver a encenderlo: crear
+> `Documents/diag_on.txt` (o `ns3fb_diag = true` en `ns3fb.toml`) y comprobar en
+> el log que `NS3FB-CONFIG` trae `diag=1`. Encendido escribe más de 200 líneas
+> por segundo y **el juego deja de responder a los botones**: es para diagnosticar,
+> no para jugar.
+>
+
+>
 > Síntoma actual: menús, Character Select y **modo Practica** se ven completos
 > (~29 fps). **El modo VS Battle sigue negro.**
 >
