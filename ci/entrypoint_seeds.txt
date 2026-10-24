@@ -99,3 +99,24 @@
 # pantalla de "Money Obtained" no avanza. Al intentar la definitiva volvio a
 # salir 0x82264BE0, que ya esta sembrada arriba (build no instalado aun).
 0x825A7AF8
+
+# --- 2026-10-24 01:36-01:39: duelo completo + pantalla de Ryos --------------
+# Build 08bc55d (con las 8 semillas anteriores). Cero errores en el log.
+# Avance real: la pantalla de Ryos ya PINTA todos los valores (7222 Ryo,
+# desglose de bonus), y la definitiva llega mas lejos. Lo que falta es la
+# funcion que procesa cada accion. Familia densa 0x825A75xx-0x825A7Bxx:
+# cada evento de combate llama a una entrada distinta de la misma tabla.
+#   01:36:54  0x825E3278   (otro rango: efectos/camara de la definitiva)
+#   01:36:59  0x825A7878
+#   01:36:59  0x825A7B38
+#   01:37:28  0x825A7AD8
+#   01:37:28  0x825A78F8
+#   01:37:57  0x825A7558
+#   01:38:43  0x82261C78   (el "avanzar" de la pantalla de Ryos)
+0x825E3278
+0x825A7878
+0x825A7B38
+0x825A7AD8
+0x825A78F8
+0x825A7558
+0x82261C78
