@@ -194,14 +194,24 @@ de 16 tipos de pase en una sesión, cosa que hoy no pasa.
 
 **Tercero, ¿el pase puede escribir color?**
 
-Una línea por tipo de pase, la primera vez que se ve:
+Una línea por tipo de pase, y **otra cada vez que su estado cambia** (`rev=2`,
+`rev=3`…):
 
 ```
-NS3FB-STATE key=0x… cmask=0x… bl=src/op/dst z=en/wr/func clip_dis=… dxclip=…
-            cull_f=… cull_b=… face=… vp=xs,xo,ys,yo sci=tl_x,tl_y br_x,br_y
-NS3FB-TGT   key=0x… c0_base=… c0_fmt=… c1_base=… c1_fmt=… d_base=… d_fmt=…
-            pitch=… msaa=…
+NS3FB-STATE key=0x… rev=1 sup=0 cmask=0x… bl=src/op/dst z=en/wr/func clip_dis=…
+            dxclip=… cull_f=… cull_b=… face=… vp=xs,xo,ys,yo sci=tl_x,tl_y br_x,br_y
+NS3FB-TGT   key=0x… rev=1 c0_base=… c0_fmt=… c1_base=… c1_fmt=… d_base=…
+            d_fmt=… pitch=… msaa=…
 ```
+
+**Las revisiones no son adorno.** La clave de pase solo codifica formatos y
+adjuntos: **no** incluye `zfunc`, `z_write`, la máscara de color ni el blend. El
+mismo pase puede tener un estado en la intro y otro distinto en la selección de
+personaje. Si solo se vuelca la primera vez, se acaba juzgando una pantalla con
+el estado de otra — pasó exactamente eso en este proyecto.
+
+`sup=` cuenta los cambios que ya no se vuelcan porque la clave llegó al tope de
+6 revisiones. Si `sup>0`, esa línea **ya no describe el estado actual**.
 
 - `cmask` a 0 en el RT0 → el pase dibuja y no escribe nada.
 - `z=0/0/…` o un `func` que rechaza todo → nada llega al color.
@@ -230,9 +240,37 @@ mundo:
   `discarded` en el resumen).
 - `dst_len=0` → no hay copia, solo clear.
 
+**Quinto: los dos experimentos que cierran la pregunta.**
+
+Cuando el pase del mundo escribe color, tiene `cmask` distinto de 0 y su rango
+EDRAM sí se resuelve, quedan dos causas y se separan con un marcador cada una.
+Se copia uno **solo**, se entra a la pantalla del fallo y se mira:
+
+| marcador en `Documents/` | qué fuerza | si con esto aparece la imagen |
+|---|---|---|
+| `ztest_off.txt` | `z_enable = 0` en todos los draws | era el **depth test**: el buffer de profundidad contra el que testea el pase tenía contenido inesperado |
+| `blend_off.txt` | `src=One`, `dst=Zero`, `op=Add` (o sea `blendEnable = VK_FALSE`) | era el **blending**: el alpha del shader se mezclaba contra un destino negro |
+
+Ambos se aplican al leer `RB_DEPTHCONTROL` y `RB_BLENDCONTROL`, que es de donde
+derivan a la vez el estado del draw, la clave de las pipelines y el pipeline
+creado: no puede quedar un estado incoherente entre capas.
+
+**Uno a uno, nunca los dos a la vez.** Con los dos puestos no se sabe cuál
+arregló la imagen. Y ninguno de los dos es una solución: si uno hace aparecer el
+mundo, lo que toca es arreglar el origen, no dejarlo forzado.
+
+Que el marcador se aplicó se comprueba en dos sitios del log:
+
+```
+NS3FB-CONFIG … zoff=1 blendoff=0
+NS3FB: ztest_off=1 (z test forzado a OFF en todos los draws)
+```
+
+Si `zoff` no sale a 1, el marcador no se aplicó y la prueba no vale.
+
 **Lo que NO dice el log.** No hay forma de saber desde el log si un píxel
 concreto salió negro por el shader: eso requiere capturar un frame en Xcode con
-Mac. Estas cuatro preguntas acotan el problema a un subsistema, no lo sustituyen.
+Mac. Estas cinco preguntas acotan el problema a un subsistema, no lo sustituyen.
 
 ## Cómo pedir ayuda
 
