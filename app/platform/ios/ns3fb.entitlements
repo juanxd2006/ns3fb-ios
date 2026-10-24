@@ -17,5 +17,13 @@
 	<key>com.apple.developer.sustained-execution</key>
 	<true/>
 	-->
+
+	<!-- Techo de RAM por encima del limite por proceso (iOS 15+). Solo lo concede
+	     una cuenta de pago o TrollStore; con Apple ID gratis el perfil no lo
+	     incluye y la firma falla, asi que queda comentado. Es la via barata
+	     frente al truco de la NSExtension (docs/RAM_EXTENSION_PLAN.md).
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+	-->
 </dict>
 </plist>
