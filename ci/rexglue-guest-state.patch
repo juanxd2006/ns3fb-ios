@@ -471,13 +471,13 @@
 +
 +// NS3FB: mismo interruptor, local a esta unidad. Sin el, cada envio escanea
 +// hasta 8 rangos x 4096 muestras y eso si se nota.
-+static bool Ns3fbMemDiag() {
++static bool Ns3fbDiag() {
 +  static const bool enabled = REXCVAR_GET(ns3fb_diag);
 +  return enabled;
 +}
 +
 +void Ns3fbScanPendingResolvedRanges() {
-+  if (!Ns3fbMemDiag()) {
++  if (!Ns3fbDiag()) {
 +    // Con el diagnostico apagado no se encola ni se escanea nada.
 +    g_ns3fb_pending_count = 0;
 +    return;
@@ -503,7 +503,7 @@
 +                                    uint32_t color_base, uint32_t depth_base, uint32_t width_div_8,
 +                                    uint32_t height_div_8) {
 +  g_ns3fb_memory = &memory;
-+  if (!Ns3fbMemDiag()) {
++  if (!Ns3fbDiag()) {
 +    return;
 +  }
 +  if (g_ns3fb_pending_count >= kNs3fbPendingRanges) {
