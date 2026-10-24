@@ -8,7 +8,7 @@
  #include <string>
  
  // Legacy backend compatibility aliases for shared readback controls.
-@@ -3865,6 +3866,206 @@
+@@ -3865,6 +3866,276 @@
    }
  }
  
@@ -212,10 +212,91 @@
 +  }
 +}
 +
++
++// --- NS3FB: texturas que ata cada pase -----------------------------------
++//
++// Una linea por cada combinacion distinta (clave, mascara de texturas, formatos
++// y direcciones) que use un draw. Sirve para responder si el shader del mundo
++// ata texturas validas y en que formato, y para cruzar su base_address con el
++// dst_base de los resolves: si el pase que compone muestrea una direccion que
++// nunca fue destino de un resolve, esta leyendo memoria vieja.
++//
++//   type    0 = texture+sampler con fetch, 1 = sampler only, 2/3 = vertex fetch
++//   fmt     xenos::TextureFormat (0 = 8_8_8_8, 6 = DXT4_5, 19 = 16F, ...)
++//   tiled   1 si esta en tiles; base_address esta >>12 en el registro
++//   wxh     size_2d + 1 (el registro guarda tamano - 1)
++static void Ns3fbNoteTextures(const VulkanRenderTargetCache::RenderPassKey& key,
++                              const RegisterFile& regs, uint32_t used_texture_mask) {
++  static uint32_t ns3fb_tex_seen[64] = {};
++  static size_t ns3fb_tex_seen_count = 0;
++  if (!used_texture_mask) {
++    return;
++  }
++  uint32_t type[4] = {};
++  uint32_t fmt[4] = {};
++  uint32_t base[4] = {};
++  uint32_t width[4] = {};
++  uint32_t height[4] = {};
++  uint32_t tiled[4] = {};
++  uint32_t slot_index[4] = {};
++  uint32_t slot_count = 0;
++  uint32_t signature = key.key ^ (used_texture_mask * 2654435761u);
++  for (uint32_t i = 0; i < 32 && slot_count < 4; ++i) {
++    if (!(used_texture_mask & (uint32_t(1) << i))) {
++      continue;
++    }
++    const xenos::xe_gpu_texture_fetch_t fetch = regs.GetTextureFetch(i);
++    const uint32_t f_type = uint32_t(fetch.type);
++    const uint32_t f_fmt = uint32_t(fetch.format);
++    const uint32_t f_base = uint32_t(fetch.base_address);
++    const uint32_t f_w = uint32_t(fetch.size_2d.width) + 1u;
++    const uint32_t f_h = uint32_t(fetch.size_2d.height) + 1u;
++    const uint32_t f_tiled = uint32_t(fetch.tiled);
++    slot_index[slot_count] = i;
++    type[slot_count] = f_type;
++    fmt[slot_count] = f_fmt;
++    base[slot_count] = f_base;
++    width[slot_count] = f_w;
++    height[slot_count] = f_h;
++    tiled[slot_count] = f_tiled;
++    signature = signature * 16777619u ^
++                (f_type | (f_fmt << 2) | (f_base << 8) | (f_tiled << 28) | (f_w << 20));
++    ++slot_count;
++  }
++  for (size_t i = 0; i < ns3fb_tex_seen_count; ++i) {
++    if (ns3fb_tex_seen[i] == signature) {
++      return;  // Ya descrita.
++    }
++  }
++  if (ns3fb_tex_seen_count >= 64) {
++    return;
++  }
++  ns3fb_tex_seen[ns3fb_tex_seen_count++] = signature;
++  REXLOG_INFO("NS3FB-TEX key=0x{:08X} sig=0x{:08X} mask=0x{:08X} slots={}", key.key, signature,
++              used_texture_mask, slot_count);
++  for (uint32_t i = 0; i < slot_count; ++i) {
++    REXLOG_INFO("NS3FB-TEXSLOT key=0x{:08X} sig=0x{:08X} slot={} type={} fmt={} tiled={} "
++                "base=0x{:08X} {}x{}",
++                key.key, signature, slot_index[i], type[i], fmt[i], tiled[i], base[i] << 12,
++                width[i], height[i]);
++  }
++}
++
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                                         IndexBufferInfo* index_buffer_info,
                                         bool major_mode_explicit) {
-@@ -4137,6 +4338,11 @@
+@@ -4126,6 +4397,10 @@
+       (pixel_shader != nullptr ? pixel_shader->GetUsedTextureMaskAfterTranslation() : 0);
+   texture_cache_->RequestTextures(used_texture_mask);
+ 
++  // NS3FB: formatos y direcciones de las texturas que ata este draw.
++  Ns3fbNoteTextures(render_target_cache_->last_update_render_pass_key(), regs,
++                    used_texture_mask);
++
+   const VulkanPipelineCache::PipelineLayoutProvider* pipeline_layout_provider;
+   // Set up the render targets - this may perform dispatches and draws.
+   if (!render_target_cache_->Update(is_rasterization_done, normalized_depth_control,
+@@ -4137,6 +4412,11 @@
    Ns3fbNoteRenderPassKey(render_target_cache_->last_update_render_pass_key(), index_count,
                           index_buffer_info != nullptr);
  
@@ -229,7 +310,139 @@
    // textures.
 --- a/src/graphics/vulkan/render_target_cache.cpp
 +++ b/src/graphics/vulkan/render_target_cache.cpp
-@@ -1140,6 +1140,133 @@
+@@ -1124,6 +1124,120 @@
+   }
+ }
+ 
++// --- NS3FB: escaneo de los pixeles resueltos ------------------------------
++//
++// El resolve deja los pixeles en memoria del invitado y esa memoria se puede
++// leer desde la CPU: es lo mas parecido a una captura de GPU que se puede hacer
++// sin un Mac. Se escanea el rango que escribio la LLAMADA ANTERIOR (para dar
++// tiempo a que la GPU termine) y se resume.
++//
++//   nz=0    el contenido es negro de verdad: el fallo esta en el rasterizado o
++//           en el pixel shader, no en quien lo lee despues.
++//   nz>0    hay pixeles con color y el fallo esta en quien muestrea esa memoria
++//           (el pase de composicion o el cache de texturas).
++//
++// Se muestrea (hasta 4096 pixels, con paso) en vez de recorrer los 1,2 MB
++// enteros: basta para distinguir negro de no negro y no cuesta nada apreciable.
++namespace {
++
++uint32_t g_ns3fb_mem_start = 0;
++uint32_t g_ns3fb_mem_length = 0;
++uint32_t g_ns3fb_mem_cbase = 0;
++uint32_t g_ns3fb_mem_dbase = 0;
++uint32_t g_ns3fb_mem_w8 = 0;
++uint32_t g_ns3fb_mem_h8 = 0;
++uint32_t g_ns3fb_mem_sig[16] = {};
++uint64_t g_ns3fb_mem_count[16] = {};
++size_t g_ns3fb_mem_sig_count = 0;
++
++}  // namespace
++
++static void Ns3fbRememberResolvedRange(uint32_t start, uint32_t length, uint32_t color_base,
++                                       uint32_t depth_base, uint32_t width_div_8,
++                                       uint32_t height_div_8) {
++  g_ns3fb_mem_start = start;
++  g_ns3fb_mem_length = length;
++  g_ns3fb_mem_cbase = color_base;
++  g_ns3fb_mem_dbase = depth_base;
++  g_ns3fb_mem_w8 = width_div_8;
++  g_ns3fb_mem_h8 = height_div_8;
++}
++
++static void Ns3fbScanResolvedRange(const memory::Memory& memory) {
++  if (!g_ns3fb_mem_length) {
++    return;
++  }
++  const uint32_t start = g_ns3fb_mem_start;
++  const uint32_t length = g_ns3fb_mem_length;
++  g_ns3fb_mem_length = 0;
++
++  const uint32_t signature = g_ns3fb_mem_cbase * 73856093u ^ g_ns3fb_mem_dbase * 19349663u ^
++                             g_ns3fb_mem_w8 * 83492791u ^ g_ns3fb_mem_h8 * 2654435761u;
++  size_t slot = g_ns3fb_mem_sig_count;
++  for (size_t i = 0; i < g_ns3fb_mem_sig_count; ++i) {
++    if (g_ns3fb_mem_sig[i] == signature) {
++      slot = i;
++      break;
++    }
++  }
++  if (slot == g_ns3fb_mem_sig_count) {
++    if (g_ns3fb_mem_sig_count >= 16) {
++      return;
++    }
++    g_ns3fb_mem_sig[g_ns3fb_mem_sig_count++] = signature;
++  }
++  const uint64_t seen = ++g_ns3fb_mem_count[slot];
++  // Las dos primeras veces y luego una de cada 100: serie temporal sin inundar.
++  if (seen > 2 && seen % 100 != 0) {
++    return;
++  }
++
++  const uint8_t* base = memory.TranslatePhysical(start);
++  if (!base) {
++    REXLOG_INFO("NS3FB-MEM c_base={} d_base={} start=0x{:08X} len=0x{:X} unmapped=1",
++                g_ns3fb_mem_cbase, g_ns3fb_mem_dbase, start, length);
++    return;
++  }
++  uint32_t step = length / 4096u;
++  if (step < 4u) {
++    step = 4u;
++  }
++  uint64_t pixels = 0;
++  uint64_t nonzero = 0;
++  uint64_t sum = 0;
++  uint32_t mn = 255;
++  uint32_t mx = 0;
++  uint32_t sample[4] = {0, 0, 0, 0};
++  for (uint32_t offset = 0; offset + 4u <= length; offset += step) {
++    const uint8_t* p = base + offset;
++    const uint32_t px = uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) |
++                        (uint32_t(p[3]) << 24);
++    if (px) {
++      ++nonzero;
++    }
++    sum += p[0];
++    if (p[0] < mn) {
++      mn = p[0];
++    }
++    if (p[0] > mx) {
++      mx = p[0];
++    }
++    if (pixels < 4) {
++      sample[pixels] = px;
++    }
++    ++pixels;
++  }
++  if (!pixels) {
++    return;
++  }
++  REXLOG_INFO(
++      "NS3FB-MEM n={} c_base={} d_base={} w8={} h8={} start=0x{:08X} len=0x{:X} px={} nz={} "
++      "pct={} min={} max={} mean={} s0=0x{:08X} s1=0x{:08X} s2=0x{:08X} s3=0x{:08X}",
++      seen, g_ns3fb_mem_cbase, g_ns3fb_mem_dbase, g_ns3fb_mem_w8, g_ns3fb_mem_h8, start, length,
++      pixels, nonzero, uint32_t(nonzero * 100u / pixels), mn, mx, uint32_t(sum / pixels),
++      sample[0], sample[1], sample[2], sample[3]);
++}
++
+ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
+                                       VulkanSharedMemory& shared_memory,
+                                       VulkanTextureCache& texture_cache,
+@@ -1131,6 +1245,10 @@
+   written_address_out = 0;
+   written_length_out = 0;
+ 
++  // NS3FB: escanear el rango que resolvio la llamada anterior (ya con la GPU
++  // terminada) antes de tocar nada del estado.
++  Ns3fbScanResolvedRange(memory);
++
+   bool draw_resolution_scaled = IsDrawResolutionScaled();
+ 
+   draw_util::ResolveInfo resolve_info;
+@@ -1140,6 +1258,133 @@
      return false;
    }
  
@@ -363,3 +576,77 @@
    // Nothing to copy/clear.
    if (!resolve_info.coordinate_info.width_div_8 || !resolve_info.height_div_8) {
      return true;
+@@ -1290,6 +1535,14 @@
+                                             resolve_info.copy_dest_extent_length);
+           written_address_out = resolve_info.copy_dest_extent_start;
+           written_length_out = resolve_info.copy_dest_extent_length;
++
++          // NS3FB: recordar el rango para escanearlo en la proxima llamada.
++          Ns3fbRememberResolvedRange(
++              resolve_info.copy_dest_extent_start, resolve_info.copy_dest_extent_length,
++              uint32_t(resolve_info.color_edram_info.base_tiles),
++              uint32_t(resolve_info.depth_edram_info.base_tiles),
++              uint32_t(resolve_info.coordinate_info.width_div_8),
++              uint32_t(resolve_info.height_div_8));
+           copied = true;
+         }
+       }
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -658,6 +658,56 @@
+                                        rt_base);
+   }
+ 
++  // --- NS3FB: rangos EDRAM que reclama cada pase ---------------------------
++  //
++  // Antes de cambiar la propiedad de los tiles, se registra que rango reclama
++  // cada pase, una vez por combinacion distinta. Es el dato que explica el 3D
++  // negro sin errores: si un pase de profundidad pequeno (un mapa de sombras,
++  // por ejemplo 1040 px de pitch = 13 tiles) reclama miles de tiles desde la
++  // base 0, se lleva por delante el color de la escena que vive en esa misma
++  // EDRAM, y el resolve posterior devuelve negro mientras el HUD, dibujado
++  // despues, sigue viendose.
++  //
++  //   height  altura estimada por DrawExtentEstimator (min con la del target)
++  //   len     tiles reclamados; base+len marca el rango
++  //   sum     tiles totales entre todos los targets del pase
++  //
++  // Si sum se acerca a 2048 (kEdramTileCount) con un solo target, ese pase
++  // esta reclamando la EDRAM entera.
++  {
++    static uint32_t ns3fb_range_seen[64] = {};
++    static size_t ns3fb_range_seen_count = 0;
++    uint32_t ns3fb_range_sig = pitch_tiles_at_32bpp * 73856093u ^
++                               uint32_t(msaa_samples) * 19349663u ^ height_used * 83492791u ^
++                               (uint32_t(edram_bases_sorted_count) << 27);
++    uint32_t ns3fb_range_sum = 0;
++    for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
++      ns3fb_range_sig = ns3fb_range_sig * 16777619u ^
++                        (edram_bases_sorted[i].first | (rt_lengths_tiles[i] << 12));
++      ns3fb_range_sum += rt_lengths_tiles[i];
++    }
++    bool ns3fb_range_known = false;
++    for (size_t i = 0; i < ns3fb_range_seen_count; ++i) {
++      if (ns3fb_range_seen[i] == ns3fb_range_sig) {
++        ns3fb_range_known = true;
++        break;
++      }
++    }
++    if (!ns3fb_range_known && ns3fb_range_seen_count < 64) {
++      ns3fb_range_seen[ns3fb_range_seen_count++] = ns3fb_range_sig;
++      REXLOG_INFO("NS3FB-RANGE sig=0x{:08X} pitch={} msaa={} height={} rts={} sum={}", ns3fb_range_sig,
++                  pitch_tiles_at_32bpp, uint32_t(msaa_samples), height_used,
++                  edram_bases_sorted_count, ns3fb_range_sum);
++      for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
++        REXLOG_INFO("NS3FB-RANGERT sig=0x{:08X} slot={} kind={} base={} len={} end={}",
++                    ns3fb_range_sig, edram_bases_sorted[i].second,
++                    edram_bases_sorted[i].second == 0 ? "depth" : "color",
++                    edram_bases_sorted[i].first, rt_lengths_tiles[i],
++                    edram_bases_sorted[i].first + rt_lengths_tiles[i]);
++      }
++    }
++  }
++
+   if (interlock_barrier_only) {
+     // Because a full pixel shader interlock barrier may clear the ownership map
+     // (since it flushes all previous writes, and there's no need for another
