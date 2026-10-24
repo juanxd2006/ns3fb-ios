@@ -1,60 +1,104 @@
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -3865,6 +3865,173 @@
+@@ -52,6 +52,7 @@
+ #include <rex/ui/vulkan/util.h>
+ 
+ #include <atomic>
++#include <chrono>
+ #include <string>
+ 
+ // Legacy backend compatibility aliases for shared readback controls.
+@@ -3865,6 +3866,206 @@
    }
  }
  
-+// --- NS3FB: estado del invitado que puede dejar el 3D en negro -------------
++// --- NS3FB: estado del invitado por pase -------------------------------
 +//
-+// Una linea por tipo de pase y CADA VEZ QUE EL ESTADO CAMBIA (rev=1, 2, 3...),
-+// no solo la primera vez que se ve el pase.
++// Un mismo pase se usa para varias cosas y su estado cambia dentro del propio
++// frame: en este juego la clave 0x1C se ve con tres estados distintos
++// (contenido con blend y z test, overlay 2D con z off, y clear con cmask 0 y
++// scissor 16x16). Por eso NO se puede registrar "el estado del pase" una vez, ni
++// tampoco por revisiones: un tope de revisiones se agota en el primer segundo y
++// el resto de la sesion queda a ciegas.
 +//
-+// Por que las revisiones: la clave de pase solo codifica formatos y adjuntos, NO
-+// incluye zfunc, z_write, la mascara de color ni el blend, y el mismo pase cambia
-+// de estado entre pantallas. Con un unico volcado por clave se estaba juzgando la
-+// seleccion de personaje con el estado de la intro: en este proyecto paso
-+// exactamente eso.
++// Lo que se registra es el CONJUNTO DE ESTADOS DISTINTOS de cada clave, sin
++// tope por clave (tabla plana de 128 entradas; si se llena, overflow lo dice):
 +//
-+// campos, y que descarta cada uno:
++//   NS3FB-STATE key=0x… sig=0x… t_ms=… at=… cmask=… bl=…/…/… z=…/…/… …
++//       Una vez por cada estado distinto. t_ms = milisegundos desde el arranque,
++//       at = numero de draw global en el que se vio por primera vez.
++//   NS3FB-TGT   key=0x… sig=0x… c0_base=… d_base=… pitch=… msaa=…
++//       Las direcciones EDRAM de ese estado, para cruzarlas con NS3FB-RES.
++//   NS3FB-SIGSTAT key=0x… sig=0x… draws=… verts=… vmin=… vmax=…
++//       Cada 1500 draws: cuantos draws y vertices lleva cada estado en ese
++//       tramo, con el minimo y el maximo de vertices por draw. ESTO es lo que
++//       permite atribuir un estado a "el mundo" (vmax de miles) o a "el HUD"
++//       (vmax de 3-4) sin adivinarlo.
 +//
-+//   cmask   mascara de escritura de color (RB_COLOR_MASK). Si los 4 bits del
-+//           RT0 estan a 0, el pase dibuja y no escribe NADA.
-+//   bl      RB_BLENDCONTROL del RT0: factores y operacion.
-+//   z       z_enable / z_write / zfunc: un zfunc que rechaza todo deja el pase
-+//           intacto sin escribir color.
-+//   clip    clip_disable y dx_clip_space_def: con clip_disable y geometria fuera
-+//           de rango no se rasteriza nada.
-+//   cull    cull_front/cull_back/face: con el winding invertido se descarta la
-+//           malla entera.
-+//   vp      viewport con signo, en punto fijo x16 (no se depende de fmt con
-+//           floats).
-+//   sci     scissor TL/BR: un scissor vacio recorta todo.
++// Campos de estado y que descarta cada uno:
 +//
-+// Y NS3FB-TGT con las direcciones EDRAM del pase, para cruzarlas con el destino
-+// de cada resolve (NS3FB-RES): si el mundo escribe en un rango EDRAM que nunca
-+// se resuelve, el resultado es negro aunque el dibujo sea correcto.
++//   cmask   mascara de escritura de color. A 0 en el RT0: el pase dibuja y no
++//           escribe nada.
++//   bl      RB_BLENDCONTROL del RT0 (factores y operacion).
++//   z       z_enable / z_write / zfunc.
++//   clip    clip_disable y dx_clip_space_def.
++//   cull    cull_front/cull_back/face.
++//   vp      viewport con signo, punto fijo x16.
++//   sci     scissor TL/BR.
 +namespace {
 +
-+constexpr size_t kNs3fbStateSlots = 32;
-+// Tope de revisiones por clave: un pase que cambia de estado en cada frame
-+// llenaria el log y taparia el cambio que importa. Pasado el tope se siguen
-+// contando en sup= para dejar constancia de que hubo mas cambios sin volcarlos.
-+constexpr uint32_t kNs3fbStateRevsPerKey = 6;
++constexpr size_t kNs3fbSigSlots = 128;
++constexpr uint64_t kNs3fbSigDumpEvery = 1500;
 +
-+struct Ns3fbPassStateSlot {
++struct Ns3fbSignatureSlot {
 +  uint32_t key;
 +  uint32_t signature;
-+  uint32_t revs;
-+  uint32_t suppressed;
++  uint64_t period_draws;
++  uint64_t period_verts;
++  uint32_t period_min_verts;
++  uint32_t period_max_verts;
 +};
 +
-+Ns3fbPassStateSlot g_ns3fb_state_slots[kNs3fbStateSlots] = {};
-+size_t g_ns3fb_state_slot_count = 0;
++Ns3fbSignatureSlot g_ns3fb_sig_slots[kNs3fbSigSlots] = {};
++size_t g_ns3fb_sig_slot_count = 0;
++uint64_t g_ns3fb_sig_overflow = 0;
++uint64_t g_ns3fb_sig_period_draws = 0;
++uint64_t g_ns3fb_sig_total_draws = 0;
 +
 +}  // namespace
 +
-+static void Ns3fbLogGuestStateForPassKey(const VulkanRenderTargetCache::RenderPassKey& key,
-+                                         const RegisterFile& regs) {
++// Milisegundos desde la primera llamada: da una hora relativa de sesion para
++// cada estado, independiente de los timestamps del logger.
++static uint64_t Ns3fbNowMs() {
++  static const auto start = std::chrono::steady_clock::now();
++  return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
++                      std::chrono::steady_clock::now() - start)
++                      .count());
++}
++
++static void Ns3fbDumpSignatureStats() {
++  for (size_t i = 0; i < g_ns3fb_sig_slot_count; ++i) {
++    Ns3fbSignatureSlot& slot = g_ns3fb_sig_slots[i];
++    if (!slot.period_draws) {
++      continue;
++    }
++    REXLOG_INFO("NS3FB-SIGSTAT key=0x{:08X} sig=0x{:08X} draws={} verts={} vmin={} vmax={}",
++                slot.key, slot.signature, slot.period_draws, slot.period_verts,
++                slot.period_min_verts, slot.period_max_verts);
++    slot.period_draws = 0;
++    slot.period_verts = 0;
++    slot.period_min_verts = 0;
++    slot.period_max_verts = 0;
++  }
++  if (g_ns3fb_sig_overflow) {
++    REXLOG_INFO("NS3FB-SIGSTAT overflow={} (estados distintos sin hueco en la tabla)",
++                g_ns3fb_sig_overflow);
++    g_ns3fb_sig_overflow = 0;
++  }
++}
++
++static void Ns3fbNoteGuestState(const VulkanRenderTargetCache::RenderPassKey& key,
++                                const RegisterFile& regs, uint32_t index_count, bool indexed) {
 +  const auto color_mask = regs.Get<reg::RB_COLOR_MASK>();
 +  const auto blend_0 = regs.Get<reg::RB_BLENDCONTROL>(reg::RB_BLENDCONTROL::rt_register_indices[0]);
 +  const auto depth_control = regs.Get<reg::RB_DEPTHCONTROL>();
@@ -67,155 +111,154 @@
 +  const auto color_1_info = regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[1]);
 +  const auto depth_info = regs.Get<reg::RB_DEPTH_INFO>();
 +
-+  // Todo a enteros: los campos de los registros son bit-fields y fmt no los
-+  // puede enlazar por referencia.
-+  const uint32_t color_mask_u32 = uint32_t(color_mask.value) & 0xFFFFu;
-+  const uint32_t blend_src = uint32_t(blend_0.color_srcblend);
-+  const uint32_t blend_op = uint32_t(blend_0.color_comb_fcn);
-+  const uint32_t blend_dst = uint32_t(blend_0.color_destblend);
-+  const uint32_t z_enable = uint32_t(depth_control.z_enable);
-+  const uint32_t z_write = uint32_t(depth_control.z_write_enable);
++  // Todo a enteros: los campos son bit-fields y fmt no los puede enlazar por
++  // referencia; los floats de viewport se pasan a punto fijo x16.
++  const uint32_t cmask = uint32_t(color_mask.value) & 0xFFFFu;
++  const uint32_t bl_src = uint32_t(blend_0.color_srcblend);
++  const uint32_t bl_op = uint32_t(blend_0.color_comb_fcn);
++  const uint32_t bl_dst = uint32_t(blend_0.color_destblend);
++  const uint32_t z_en = uint32_t(depth_control.z_enable);
++  const uint32_t z_wr = uint32_t(depth_control.z_write_enable);
 +  const uint32_t zfunc = uint32_t(depth_control.zfunc);
-+  const uint32_t clip_disable = uint32_t(clip_cntl.clip_disable);
-+  const uint32_t dx_clip = uint32_t(clip_cntl.dx_clip_space_def);
-+  const uint32_t cull_front = uint32_t(sc_mode.cull_front);
-+  const uint32_t cull_back = uint32_t(sc_mode.cull_back);
++  const uint32_t clip_dis = uint32_t(clip_cntl.clip_disable);
++  const uint32_t dxclip = uint32_t(clip_cntl.dx_clip_space_def);
++  const uint32_t cull_f = uint32_t(sc_mode.cull_front);
++  const uint32_t cull_b = uint32_t(sc_mode.cull_back);
 +  const uint32_t face = uint32_t(sc_mode.face);
-+
-+  // Viewport en punto fijo x16: con 1/16 de pixel basta para ver un viewport
-+  // roto y evita depender del formato de floats en esta unidad.
 +  const int32_t vp_xs = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE) * 16.0f);
 +  const int32_t vp_xo = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XOFFSET) * 16.0f);
 +  const int32_t vp_ys = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE) * 16.0f);
 +  const int32_t vp_yo = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YOFFSET) * 16.0f);
-+
-+  const uint32_t sc_tl_x = uint32_t(scissor_tl.tl_x);
-+  const uint32_t sc_tl_y = uint32_t(scissor_tl.tl_y);
-+  const uint32_t sc_br_x = uint32_t(scissor_br.br_x);
-+  const uint32_t sc_br_y = uint32_t(scissor_br.br_y);
-+
-+  // Bases EDRAM: color_base esta partido en 11 + 1 bits.
-+  const uint32_t color_0_base =
++  const uint32_t sci_tl_x = uint32_t(scissor_tl.tl_x);
++  const uint32_t sci_tl_y = uint32_t(scissor_tl.tl_y);
++  const uint32_t sci_br_x = uint32_t(scissor_br.br_x);
++  const uint32_t sci_br_y = uint32_t(scissor_br.br_y);
++  const uint32_t c0_base =
 +      uint32_t(color_0_info.color_base) | (uint32_t(color_0_info.color_base_bit_11) << 11);
-+  const uint32_t color_1_base =
++  const uint32_t c1_base =
 +      uint32_t(color_1_info.color_base) | (uint32_t(color_1_info.color_base_bit_11) << 11);
-+  const uint32_t depth_base =
++  const uint32_t d_base =
 +      uint32_t(depth_info.depth_base) | (uint32_t(depth_info.depth_base_bit_11) << 11);
-+  const uint32_t color_0_format = uint32_t(color_0_info.color_format);
-+  const uint32_t color_1_format = uint32_t(color_1_info.color_format);
-+  const uint32_t depth_format = uint32_t(depth_info.depth_format);
-+  const uint32_t surface_pitch = uint32_t(surface_info.surface_pitch);
-+  const uint32_t msaa_samples_field = uint32_t(surface_info.msaa_samples);
++  const uint32_t c0_fmt = uint32_t(color_0_info.color_format);
++  const uint32_t c1_fmt = uint32_t(color_1_info.color_format);
++  const uint32_t d_fmt = uint32_t(depth_info.depth_format);
++  const uint32_t pitch = uint32_t(surface_info.surface_pitch);
++  const uint32_t msaa = uint32_t(surface_info.msaa_samples);
 +
-+  // Firma del estado: si no cambia, no se imprime nada.
 +  uint32_t signature = key.key;
-+  signature = signature * 16777619u ^ color_mask_u32;
-+  signature = signature * 16777619u ^ (blend_src | (blend_op << 8) | (blend_dst << 16));
-+  signature = signature * 16777619u ^ (z_enable | (z_write << 1) | (zfunc << 2));
++  signature = signature * 16777619u ^ cmask;
++  signature = signature * 16777619u ^ (bl_src | (bl_op << 8) | (bl_dst << 16));
++  signature = signature * 16777619u ^ (z_en | (z_wr << 1) | (zfunc << 2));
 +  signature = signature * 16777619u ^
-+              (clip_disable | (dx_clip << 1) | (cull_front << 2) | (cull_back << 3) | (face << 4));
++              (clip_dis | (dxclip << 1) | (cull_f << 2) | (cull_b << 3) | (face << 4));
 +  signature = signature * 16777619u ^ uint32_t(vp_xs) ^ (uint32_t(vp_xo) << 13) ^
 +              (uint32_t(vp_ys) << 7) ^ (uint32_t(vp_yo) << 21);
 +  signature = signature * 16777619u ^
-+              (sc_tl_x | (sc_tl_y << 14) | (sc_br_x << 5) | (sc_br_y << 19));
++              (sci_tl_x | (sci_tl_y << 14) | (sci_br_x << 5) | (sci_br_y << 19));
 +  signature = signature * 16777619u ^
-+              (color_0_base | (color_0_format << 12) | (color_1_base << 16) | (color_1_format << 28));
-+  signature = signature * 16777619u ^ (depth_base | (depth_format << 12) | (surface_pitch << 16) |
-+                                       (msaa_samples_field << 27));
++              (c0_base | (c0_fmt << 12) | (c1_base << 16) | (c1_fmt << 28));
++  signature = signature * 16777619u ^
++              (d_base | (d_fmt << 12) | (pitch << 16) | (msaa << 27));
 +
-+  Ns3fbPassStateSlot* slot = nullptr;
-+  for (size_t i = 0; i < g_ns3fb_state_slot_count; ++i) {
-+    if (g_ns3fb_state_slots[i].key == key.key) {
-+      slot = &g_ns3fb_state_slots[i];
++  Ns3fbSignatureSlot* slot = nullptr;
++  for (size_t i = 0; i < g_ns3fb_sig_slot_count; ++i) {
++    if (g_ns3fb_sig_slots[i].key == key.key &&
++        g_ns3fb_sig_slots[i].signature == signature) {
++      slot = &g_ns3fb_sig_slots[i];
 +      break;
 +    }
 +  }
 +  if (!slot) {
-+    if (g_ns3fb_state_slot_count >= kNs3fbStateSlots) {
-+      return;  // Mas claves que huecos: no se inventan revisiones.
-+    }
-+    slot = &g_ns3fb_state_slots[g_ns3fb_state_slot_count++];
-+    slot->key = key.key;
-+    slot->signature = signature;
-+    slot->revs = 0;
-+    slot->suppressed = 0;
-+  } else if (slot->signature == signature) {
-+    return;  // Sin cambios respecto a la ultima revision: no se escribe nada.
-+  } else if (slot->revs >= kNs3fbStateRevsPerKey) {
-+    // Tope alcanzado: el estado sigue cambiando y ya no se vuelca. Se avisa UNA
-+    // vez, porque si no la ultima revision impresa parece la definitiva cuando
-+    // ya no lo es.
-+    if (slot->suppressed == 0) {
++    if (g_ns3fb_sig_slot_count >= kNs3fbSigSlots) {
++      ++g_ns3fb_sig_overflow;
++    } else {
++      slot = &g_ns3fb_sig_slots[g_ns3fb_sig_slot_count++];
++      slot->key = key.key;
++      slot->signature = signature;
++      slot->period_draws = 0;
++      slot->period_verts = 0;
++      slot->period_min_verts = 0;
++      slot->period_max_verts = 0;
++      // Primera vez que se ve este estado: se describe una sola vez.
 +      REXLOG_INFO(
-+          "NS3FB-STATE key=0x{:08X} rev={} sup=1 (tope de revisiones: el estado sigue cambiando y "
-+          "ya no se vuelca)",
-+          key.key, slot->revs);
++          "NS3FB-STATE key=0x{:08X} sig=0x{:08X} t_ms={} at={} cmask=0x{:04X} bl={}/{}/{} "
++          "z={}/{}/{} clip_dis={} dxclip={} cull_f={} cull_b={} face={} vp={},{},{},{} "
++          "sci={},{} {},{}",
++          key.key, signature, Ns3fbNowMs(), g_ns3fb_sig_total_draws, cmask, bl_src, bl_op, bl_dst,
++          z_en, z_wr, zfunc, clip_dis, dxclip, cull_f, cull_b, face, vp_xs, vp_xo, vp_ys, vp_yo,
++          sci_tl_x, sci_tl_y, sci_br_x, sci_br_y);
++      REXLOG_INFO(
++          "NS3FB-TGT key=0x{:08X} sig=0x{:08X} c0_base={} c0_fmt={} c1_base={} c1_fmt={} "
++          "d_base={} d_fmt={} pitch={} msaa={}",
++          key.key, signature, c0_base, c0_fmt, c1_base, c1_fmt, d_base, d_fmt, pitch, msaa);
 +    }
-+    ++slot->suppressed;
-+    return;
 +  }
-+  slot->signature = signature;
-+  ++slot->revs;
-+  const uint32_t rev = slot->revs;
-+  const uint32_t suppressed = slot->suppressed;
-+  // Con sup>0 el estado ya no es el que describe esta linea: el log lo avisa.
-+  REXLOG_INFO(
-+      "NS3FB-STATE key=0x{:08X} rev={} sup={} cmask=0x{:04X} bl={}/{}/{} z={}/{}/{} "
-+      "clip_dis={} dxclip={} cull_f={} cull_b={} face={} vp={},{},{},{} sci={},{} {},{}",
-+      key.key, rev, suppressed, color_mask_u32, blend_src, blend_op, blend_dst, z_enable, z_write,
-+      zfunc, clip_disable, dx_clip, cull_front, cull_back, face, vp_xs, vp_xo, vp_ys, vp_yo, sc_tl_x,
-+      sc_tl_y, sc_br_x, sc_br_y);
-+  REXLOG_INFO("NS3FB-TGT key=0x{:08X} rev={} c0_base={} c0_fmt={} c1_base={} c1_fmt={} d_base={} "
-+              "d_fmt={} pitch={} msaa={}",
-+              key.key, rev, color_0_base, color_0_format, color_1_base, color_1_format, depth_base,
-+              depth_format, surface_pitch, msaa_samples_field);
++  if (slot) {
++    ++slot->period_draws;
++    slot->period_verts += index_count;
++    if (!slot->period_min_verts || index_count < slot->period_min_verts) {
++      slot->period_min_verts = index_count;
++    }
++    if (index_count > slot->period_max_verts) {
++      slot->period_max_verts = index_count;
++    }
++  }
++  (void)indexed;
++
++  ++g_ns3fb_sig_total_draws;
++  if (++g_ns3fb_sig_period_draws >= kNs3fbSigDumpEvery) {
++    g_ns3fb_sig_period_draws = 0;
++    Ns3fbDumpSignatureStats();
++  }
 +}
 +
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                                         IndexBufferInfo* index_buffer_info,
                                         bool major_mode_explicit) {
-@@ -4137,6 +4304,11 @@
+@@ -4137,6 +4338,11 @@
    Ns3fbNoteRenderPassKey(render_target_cache_->last_update_render_pass_key(), index_count,
                           index_buffer_info != nullptr);
  
-+  // NS3FB: estado y direcciones EDRAM del pase. Se vuelca la primera vez y
-+  // cada vez que el estado cambia (rev=2, rev=3...), porque la clave de pase no
-+  // codifica zfunc, z_write, mascara de color ni blend.
-+  Ns3fbLogGuestStateForPassKey(render_target_cache_->last_update_render_pass_key(), regs);
++  // NS3FB: estado del invitado y direcciones EDRAM, una vez por cada estado
++  // distinto de cada clave, mas estadisticas de vertices cada 1500 draws.
++  Ns3fbNoteGuestState(render_target_cache_->last_update_render_pass_key(), regs, index_count,
++                      index_buffer_info != nullptr);
 +
    // Create the pipeline (for this, need the render pass from the render target
    // cache), translating the shaders - doing this now to obtain the used
    // textures.
 --- a/src/graphics/vulkan/render_target_cache.cpp
 +++ b/src/graphics/vulkan/render_target_cache.cpp
-@@ -1140,6 +1140,79 @@
+@@ -1140,6 +1140,133 @@
      return false;
    }
  
-+  // --- NS3FB: trazado de resolves -----------------------------------------
++  // --- NS3FB: trazado de resolves y clears --------------------------------
 +  //
 +  // Cada resolve es el unico camino por el que lo escrito en la EDRAM llega a
 +  // memoria del invitado (y de ahi a la pantalla). Se registra UNA LINEA POR
-+  // FIRMA distinta, no una por resolve: un juego resuelve decenas de veces por
-+  // frame y volcarlas todas inunda el log y pierde justo las lineas que
-+  // importan. La firma agrupa origen y destino, asi que cada combinacion
-+  // distinta de "que tile EDRAM se copia a donde" sale una sola vez.
++  // FIRMA distinta (no por resolve: un juego resuelve decenas de veces por
++  // frame), y la firma incluye el destino, los valores de clear y los flags de
++  // clear, para que un clear distinto genere su propia linea.
 +  //
-+  //   w8/h8 = 0     el resolve se descarta por geometria invalida: ese pase
-+  //                 nunca llega a memoria, salga lo que salga del rasterizador.
-+  //   c_base        tile EDRAM de origen; se cruza con NS3FB-TGT del pase.
-+  //   dst_len = 0   no hay copia (solo clear): el contenido no se escribe.
-+  //   cc            RB_COPY_CONTROL: copy_src_select 0/1/2/3 = color0..3,
-+  //                 4 = profundidad; copy_command 0 = kRaw, 1 = kConvert.
++  //   w8/h8 = 0     el resolve se descarta por geometria invalida.
++  //   c_base        tile EDRAM de origen; se cruza con NS3FB-TGT.
++  //   dst_len = 0   no hay copia (solo clear).
++  //   cc            RB_COPY_CONTROL: copy_src_select 0..3 = color0..3, 4 =
++  //                 profundidad; copy_command 0 = kRaw, 1 = kConvert.
++  //   clr           bits de clear del RB_COPY_CONTROL (bit 8 color, bit 9 depth).
 +  //
-+  // Ademas, cada 1200 resolves se resume: NS3FB-RES-SUM con el total, cuantas
-+  // firmas distintas hay y cuantos resolves se descartaron por geometria.
++  // NS3FB-CLEAR se emite cuando de verdad se limpia algo, con el valor
++  // (RB_DEPTH_CLEAR / RB_COLOR_CLEAR) y el rango EXACTO de tiles EDRAM que se
++  // limpia, calculado con GetResolveEdramTileSpan. Es el dato que faltaba para
++  // saber si la profundidad contra la que testea el mundo se limpia a 0 (cerca)
++  // o a 1 (lejos): con zfunc=lessEqual, limpiar a 0 hace que no pase ni un
++  // fragmento.
 +  {
 +    static uint64_t ns3fb_res_total = 0;
 +    static uint64_t ns3fb_res_discarded = 0;
 +    constexpr size_t kNs3fbResSigSlots = 96;
 +    static uint32_t ns3fb_res_sig[kNs3fbResSigSlots] = {};
-+    static uint64_t ns3fb_res_sig_count[kNs3fbResSigSlots] = {};
 +    static size_t ns3fb_res_sig_size = 0;
 +
 +    ++ns3fb_res_total;
@@ -231,37 +274,89 @@
 +    const uint32_t ns3fb_dst_len = uint32_t(resolve_info.copy_dest_extent_length);
 +    const uint32_t ns3fb_original = uint32_t(resolve_info.color_original_base);
 +    const uint32_t ns3fb_copy_control = uint32_t(resolve_info.rb_copy_control.value);
++    const uint32_t ns3fb_clr_flags = ((ns3fb_copy_control >> 8) & 3u);
++    const uint32_t ns3fb_depth_clear = uint32_t(resolve_info.rb_depth_clear);
++    const uint32_t ns3fb_color_clear = uint32_t(resolve_info.rb_color_clear);
++    const uint32_t ns3fb_color_clear_lo = uint32_t(resolve_info.rb_color_clear_lo);
 +    if (!ns3fb_w8 || !ns3fb_h8) {
 +      ++ns3fb_res_discarded;
 +    }
-+    const uint32_t ns3fb_sig = ns3fb_color_base * 73856093u ^ ns3fb_color_fmt * 19349663u ^
-+                               ns3fb_color_64bpp * 83492791u ^ ns3fb_color_msaa * 2654435761u ^
-+                               ns3fb_depth_base * 40503u ^ ns3fb_w8 * 2246822519u ^
-+                               ns3fb_h8 * 3266489917u ^ ns3fb_dst_base * 668265263u ^
-+                               ns3fb_dst_len * 374761393u;
++    // Valor de clear en la firma: si cambia el valor, es otro caso.
++    uint32_t ns3fb_sig = ns3fb_color_base * 73856093u ^ ns3fb_color_fmt * 19349663u ^
++                         ns3fb_color_64bpp * 83492791u ^ ns3fb_color_msaa * 2654435761u ^
++                         ns3fb_depth_base * 40503u ^ ns3fb_w8 * 2246822519u ^
++                         ns3fb_h8 * 3266489917u ^ ns3fb_dst_base * 668265263u ^
++                         ns3fb_dst_len * 374761393u ^ ns3fb_clr_flags * 61681u ^
++                         ns3fb_depth_clear * 2654435761u ^ ns3fb_color_clear * 97u ^
++                         ns3fb_color_clear_lo * 31u;
 +
 +    bool sig_known = false;
 +    for (size_t i = 0; i < ns3fb_res_sig_size; ++i) {
 +      if (ns3fb_res_sig[i] == ns3fb_sig) {
-+        ++ns3fb_res_sig_count[i];
 +        sig_known = true;
 +        break;
 +      }
 +    }
 +    if (!sig_known && ns3fb_res_sig_size < kNs3fbResSigSlots) {
-+      ns3fb_res_sig[ns3fb_res_sig_size] = ns3fb_sig;
-+      ns3fb_res_sig_count[ns3fb_res_sig_size] = 1;
-+      ++ns3fb_res_sig_size;
++      ns3fb_res_sig[ns3fb_res_sig_size++] = ns3fb_sig;
 +      REXLOG_INFO(
 +          "NS3FB-RES n={} c_base={} c_fmt={} c64={} c_msaa={} d_base={} w8={} h8={} "
-+          "dst_base=0x{:08X} dst_start=0x{:08X} dst_len=0x{:X} orig={} cc=0x{:08X}",
-+          ns3fb_res_total, ns3fb_color_base, ns3fb_color_fmt, ns3fb_color_64bpp, ns3fb_color_msaa,
-+          ns3fb_depth_base, ns3fb_w8, ns3fb_h8, ns3fb_dst_base, ns3fb_dst_start, ns3fb_dst_len,
-+          ns3fb_original, ns3fb_copy_control);
++          "dst_base=0x{:08X} dst_start=0x{:08X} dst_len=0x{:X} orig={} cc=0x{:08X} clr={}",
++          ns3fb_res_total, ns3fb_color_base, ns3fb_color_fmt, ns3fb_color_64bpp,
++          ns3fb_color_msaa, ns3fb_depth_base, ns3fb_w8, ns3fb_h8, ns3fb_dst_base,
++          ns3fb_dst_start, ns3fb_dst_len, ns3fb_original, ns3fb_copy_control, ns3fb_clr_flags);
 +    }
 +    if (ns3fb_res_total % 1200 == 0) {
 +      REXLOG_INFO("NS3FB-RES-SUM n={} signatures={} discarded={}", ns3fb_res_total,
 +                  ns3fb_res_sig_size, ns3fb_res_discarded);
++    }
++
++    // Clear real: valor y rango EDRAM exacto.
++    const bool ns3fb_clear_depth = resolve_info.IsClearingDepth();
++    const bool ns3fb_clear_color = resolve_info.IsClearingColor();
++    if (ns3fb_clear_depth || ns3fb_clear_color) {
++      static uint32_t ns3fb_clear_seen[64] = {};
++      static size_t ns3fb_clear_seen_count = 0;
++      uint32_t ns3fb_clear_sig = ns3fb_sig ^ (ns3fb_clear_depth ? 0x10000u : 0u) ^
++                                 (ns3fb_clear_color ? 0x20000u : 0u);
++      bool ns3fb_clear_known = false;
++      for (size_t i = 0; i < ns3fb_clear_seen_count; ++i) {
++        if (ns3fb_clear_seen[i] == ns3fb_clear_sig) {
++          ns3fb_clear_known = true;
++          break;
++        }
++      }
++      if (!ns3fb_clear_known && ns3fb_clear_seen_count < 64) {
++        ns3fb_clear_seen[ns3fb_clear_seen_count++] = ns3fb_clear_sig;
++        uint32_t ns3fb_depth_span_base = 0, ns3fb_depth_span_row = 0, ns3fb_depth_span_rows = 0;
++        uint32_t ns3fb_color_span_base = 0, ns3fb_color_span_row = 0, ns3fb_color_span_rows = 0;
++        if (ns3fb_clear_depth) {
++          draw_util::GetResolveEdramTileSpan(resolve_info.depth_edram_info,
++                                             resolve_info.coordinate_info, ns3fb_h8,
++                                             ns3fb_depth_span_base, ns3fb_depth_span_row,
++                                             ns3fb_depth_span_rows);
++        }
++        if (ns3fb_clear_color) {
++          draw_util::GetResolveEdramTileSpan(resolve_info.color_edram_info,
++                                             resolve_info.coordinate_info, ns3fb_h8,
++                                             ns3fb_color_span_base, ns3fb_color_span_row,
++                                             ns3fb_color_span_rows);
++        }
++        REXLOG_INFO(
++            "NS3FB-CLEAR n={} depth={} color={} d_value=0x{:08X} c_value=0x{:08X}{:08X} "
++            "d_base={} d_pitch={} d_fmt={} d_span={}+{}x{} c_base={} c_pitch={} c_fmt={} "
++            "c_span={}+{}x{} w8={} h8={}",
++            ns3fb_res_total, ns3fb_clear_depth ? 1 : 0, ns3fb_clear_color ? 1 : 0,
++            ns3fb_depth_clear, ns3fb_color_clear_lo, ns3fb_color_clear,
++            uint32_t(resolve_info.depth_edram_info.base_tiles),
++            uint32_t(resolve_info.depth_edram_info.pitch_tiles),
++            uint32_t(resolve_info.depth_edram_info.format), ns3fb_depth_span_base,
++            ns3fb_depth_span_row, ns3fb_depth_span_rows,
++            uint32_t(resolve_info.color_edram_info.base_tiles),
++            uint32_t(resolve_info.color_edram_info.pitch_tiles),
++            uint32_t(resolve_info.color_edram_info.format), ns3fb_color_span_base,
++            ns3fb_color_span_row, ns3fb_color_span_rows, ns3fb_w8, ns3fb_h8);
++      }
 +    }
 +  }
 +
