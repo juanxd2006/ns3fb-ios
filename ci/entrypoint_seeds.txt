@@ -120,3 +120,24 @@
 0x825A78F8
 0x825A7558
 0x82261C78
+
+# --- 2026-10-24 02:01-02:05: modo historia + awakening ------------------------
+# Build 7388071. Cero errores. Dos sintomas nuevos, ambos de la misma tabla:
+#   - modo historia: al pulsar A se queda "corriendo" (esperando callback)
+#   - awakening ("modo bestia"): el personaje se queda en ese estado
+# Todas las direcciones de la familia son multiplos de 8: es una tabla de
+# punteros a funcion (callbacks de eventos), no funciones sueltas.
+#   02:01:20  0x825A7638   02:01:55  0x825A7808
+#   02:02:41  0x826057F8   02:03:48  0x825A7468
+#   02:03:58  0x825A7278   02:04:40  0x82296CB0   0x825A7348
+#   02:04:58  0x825A74F8   02:05:01  0x825A72F8   02:05:05  0x825A7758
+0x825A7638
+0x825A7808
+0x826057F8
+0x825A7468
+0x825A7278
+0x82296CB0
+0x825A7348
+0x825A74F8
+0x825A72F8
+0x825A7758
