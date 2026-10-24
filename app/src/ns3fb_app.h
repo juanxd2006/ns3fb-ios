@@ -350,6 +350,15 @@ class Ns3fbApp : public rex::ReXApp {
         {"msaa1.txt", "msaa_override", "1"},
         {"msaa2.txt", "msaa_override", "2"},
         {"msaa4.txt", "msaa_override", "4"},
+        // Diagnostico del 3D negro (ci/rexglue-diag-overrides.patch).
+        //   ztest_off.txt  fuerza z_enable=0 en todos los draws. Si con esto
+        //                  aparece la geometria, era el depth test.
+        //   blend_off.txt  fuerza One/Zero/Add en todos los draws, que es la
+        //                  condicion con la que el pipeline apaga el blending.
+        //                  Si aparece con este y no sin el, era el alpha.
+        // UNO A UNO, nunca los dos a la vez: juntos no dicen cual arreglo.
+        {"ztest_off.txt", "ztest_off", "true"},
+        {"blend_off.txt", "blend_off", "true"},
     };
     // Volcado del estado efectivo.
     //
@@ -362,13 +371,17 @@ class Ns3fbApp : public rex::ReXApp {
     const auto q_b = [](const char* name) { return rex::cvar::Query<bool>(name) ? 1 : 0; };
     REXLOG_INFO(
         "NS3FB-CONFIG msaa={} video={}x{} rt_path={} occl={} gamma16={} snorm16={} "
-        "aniso={} async={} unclipped_cpu={} letterbox={} fsi_mask={} direct_resolve={}",
+        "aniso={} async={} unclipped_cpu={} letterbox={} fsi_mask={} direct_resolve={} "
+        "zoff={} blendoff={}",
         q_i("msaa_override"), q_i("video_mode_width"), q_i("video_mode_height"),
         rex::cvar::Query<std::string>("render_target_path_vulkan"), q_b("occlusion_query_enable"),
         q_b("gamma_render_target_as_unorm16"), q_b("snorm16_render_target_full_range"),
         q_i("anisotropic_override"), q_b("async_shader_compilation"),
         q_b("execute_unclipped_draw_vs_on_cpu"), q_b("present_letterbox"),
-        q_b("fsi_sample_mask_from_sample_id"), q_b("direct_host_resolve"));
+        q_b("fsi_sample_mask_from_sample_id"), q_b("direct_host_resolve"),
+        // Los dos overrides de diagnostico: si no son 1, los marcadores no se
+        // aplicaron y el build no sirve para decidir nada.
+        q_b("ztest_off"), q_b("blend_off"));
 
     for (const auto& marker : kCvarMarkers) {
       std::error_code marker_ec;
