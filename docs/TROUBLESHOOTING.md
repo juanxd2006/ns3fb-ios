@@ -149,6 +149,91 @@ hace throttling. El parche está escrito y desactivado en `app/src/main.cpp`
 ### 8. Audio entrecortado
 Sube `audio_maxqframes` a 24–32. Baja si la latencia molesta.
 
+### 9. El 3D sale negro con los menús y el HUD perfectos
+
+Ese síntoma (mundo negro, UI y partículas bien, audio y lógica correctos, cero
+errores en el log) tiene cuatro causas posibles y el log las separa sin captura
+de GPU. Todo lo que sigue lo escriben los parches de diagnóstico
+(`rexglue-draw-stats`, `rexglue-rt-stats`, `rexglue-guest-state`) y es **de solo
+lectura**: no cambian el comportamiento del renderer.
+
+**Primero, ¿se envía la geometría?**
+
+```
+NS3FB-DRAW next300 indexed=… verts=… prims: p4=… p6=…
+```
+
+Si en pelea aparecen `p4`/`p6` con cientos de miles de vértices, el mundo se
+envía y el problema es de estado, formato o composite. Si solo hay `p8`/`p1`, el
+juego no está emitiendo el mundo y el fallo es de lógica del invitado.
+
+**Segundo, ¿a qué tipo de pase van esos vértices?**
+
+Tabla acumulativa, volcada cada 1500 draws clasificados:
+
+```
+NS3FB-KEYS n=… slots=… dropped=… lost=… lost_cum=…
+NS3FB-KEYSK slot=0 key=14 hex=0xE draws=… verts=… indexed=…
+```
+
+Cada `NS3FB-KEYSK` es un tipo de pase. Busca la línea con los **vértices del
+mundo** (decenas de miles) y lee su `key`:
+
+- `key=14` (0x0E, depth + 8:8:8:8, 4x) → el mundo usa un target normal con
+  depth; el fallo está en el shader o en el composite posterior.
+- `key=1802` / `1800` (0x70A / 0x708, HDR 16F) → el mundo va al target HDR sin
+  depth, el que MoltenVK no sabe mezclar.
+- `key=6` (0x06, solo depth) → el color del mundo no se escribe a ningún target
+  visible.
+
+`lost_cum` es la clave del diagnóstico: cuenta draws que el contador global vio
+y que **nunca llegaron a la fase de render targets**, es decir que murieron en
+`IssueDraw`. Si no es 0, el problema es anterior a cualquier formato y hay que
+mirar los `draw_fail` (que sí imprimen `error`). `dropped` solo sube si hay más
+de 16 tipos de pase en una sesión, cosa que hoy no pasa.
+
+**Tercero, ¿el pase puede escribir color?**
+
+Una línea por tipo de pase, la primera vez que se ve:
+
+```
+NS3FB-STATE key=0x… cmask=0x… bl=src/op/dst z=en/wr/func clip_dis=… dxclip=…
+            cull_f=… cull_b=… face=… vp=xs,xo,ys,yo sci=tl_x,tl_y br_x,br_y
+NS3FB-TGT   key=0x… c0_base=… c0_fmt=… c1_base=… c1_fmt=… d_base=… d_fmt=…
+            pitch=… msaa=…
+```
+
+- `cmask` a 0 en el RT0 → el pase dibuja y no escribe nada.
+- `z=0/0/…` o un `func` que rechaza todo → nada llega al color.
+- `clip_dis=1` o un `vp`/`sci` de tamaño cero o desplazado → la geometría queda
+  fuera de pantalla aunque los vértices se envíen.
+- `cull_f`/`cull_b` con `face` invertido → se descarta la malla entera.
+
+`vp` va en punto fijo ×16 (el `int` es el valor real multiplicado por 16).
+
+**Cuarto, ¿ese pase llega a memoria del invitado?**
+
+```
+NS3FB-RES     n=… c_base=… c_fmt=… c64=… c_msaa=… d_base=… w8=… h8=…
+              dst_base=0x… dst_start=0x… dst_len=0x… orig=… cc=0x…
+NS3FB-RES-SUM n=… signatures=… discarded=…
+```
+
+Una línea **por firma distinta** (no por resolve: un juego resuelve decenas de
+veces por frame). Cruza `c_base` con el `c0_base` del `NS3FB-TGT` del pase del
+mundo:
+
+- Si el rango EDRAM donde escribe el mundo **no aparece** en ningún `NS3FB-RES`,
+  ese pase nunca se copia a memoria del invitado: se dibuja bien y no se ve
+  nunca. El culpable es el camino de resolve, no el shader.
+- `w8=0` o `h8=0` → el resolve se descarta por geometría inválida (lo cuenta
+  `discarded` en el resumen).
+- `dst_len=0` → no hay copia, solo clear.
+
+**Lo que NO dice el log.** No hay forma de saber desde el log si un píxel
+concreto salió negro por el shader: eso requiere capturar un frame en Xcode con
+Mac. Estas cuatro preguntas acotan el problema a un subsistema, no lo sustituyen.
+
 ## Cómo pedir ayuda
 
 En una issue incluye: modelo de iPhone, versión de iOS, el log `ns3fb_*.log` más
