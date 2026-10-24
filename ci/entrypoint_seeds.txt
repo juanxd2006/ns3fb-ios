@@ -82,3 +82,14 @@
 0x825A7678
 0x825A76C8
 0x82261CB8
+
+# --- 2026-10-24 01:01: duelo completo (build con las 5 anteriores) ----------
+# Las 5 de la sesion anterior ya NO aparecen: la pantalla de resultados avanza.
+# Queda la definitiva: se ve la animacion y la secuencia se detiene. Estas tres
+# se llamaron desde el invitado y se ejecutaron como no-op:
+#   00:58:56  0x825A7AB8   (inicio de asalto / evento de combate)
+#   00:59:06  0x825A78D8
+#   01:01:29  0x82264BE0   (justo al arrancar el jutsu definitivo)
+0x825A7AB8
+0x825A78D8
+0x82264BE0
