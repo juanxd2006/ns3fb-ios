@@ -347,9 +347,16 @@
    // textures.
 --- a/src/graphics/vulkan/render_target_cache.cpp
 +++ b/src/graphics/vulkan/render_target_cache.cpp
-@@ -1113,6 +1113,9 @@
+@@ -1113,6 +1113,16 @@
  }
  
++// NS3FB: la definicion vive mas abajo, en el namespace anonimo de este mismo
++// archivo. Hace falta declararla aqui porque el escaneo debe ocurrir en
++// CompletedSubmissionUpdated(), que esta antes de la definicion.
++namespace {
++void Ns3fbScanPendingResolvedRanges();
++}  // namespace
++
  void VulkanRenderTargetCache::CompletedSubmissionUpdated() {
 +  // NS3FB: aqui la GPU ya termino, asi que este es el unico punto en el que
 +  // leer la memoria del invitado da el contenido real del resolve.
