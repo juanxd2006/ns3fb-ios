@@ -326,7 +326,7 @@ Apple ID gratis la firma falla si los dejas activos.
   por el codegen es una obra derivada de **tu** `default.xex`: no lo redistribuyas.
 - **No abras issues pidiendo o compartiendo archivos del juego.** Se cierran sin respuesta.
 - No publicable en la App Store. Solo sideload / TestFlight interno.
-- Licencia del código: [LICENSE](LICENSE) · Terceros: [CREDITS.md](CREDITS.md)
+- Licencia del código: [LICENSE](LICENSE) · Alcance de esa licencia: [NOTICE.md](NOTICE.md) · Terceros: [CREDITS.md](CREDITS.md)
 
 ## 🙏 Créditos
 
