@@ -36,3 +36,10 @@ rexglue-msaa-override.patch
 # corrompia la imagen; ademas no se podia desactivar sin recompilar, asi que
 # nunca se pudo medir de verdad. Se conserva como referencia.
 # rexglue-force-1x-msaa.patch
+# Estado del invitado por tipo de pase (NS3FB-STATE, NS3FB-TGT) y trazado de
+# resolves (NS3FB-RES). Responde al 3D negro sin captura de GPU: si la mascara
+# de color es 0, si el pase nunca se resuelve, o si escribe en un rango EDRAM
+# distinto del que se copia a memoria del invitado. Solo lectura, no cambia
+# comportamiento. Requiere rexglue-rt-stats.patch (usa g_ns3fb_draw_total y
+# el bloque de claves de pase).
+rexglue-guest-state.patch
