@@ -1,96 +1,99 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="NS3FB iOS — port nativo de Xbox 360 a iPhone" width="100%">
+<img src="assets/banner.svg" alt="NS3FB iOS — native Xbox 360 port for iPhone" width="100%">
 
 <br>
 
-**Naruto Shippuden: Ultimate Ninja Storm 3 Full Burst** corriendo nativo en iPhone.
+**Naruto Shippuden: Ultimate Ninja Storm 3 Full Burst** running natively on iPhone.
 
-Recompilación estática PowerPC → ARM64 · Vulkan sobre Metal · ~30 fps
+Static PowerPC → ARM64 recompilation · Vulkan over Metal · ~30 fps
 
 <br>
 
-[![iOS](https://img.shields.io/badge/iOS-16.3%2B-000000?logo=apple&logoColor=white)](#-requisitos-mínimos)
-[![Device](https://img.shields.io/badge/arm64-iPhone-555555)](#-requisitos-mínimos)
+[![iOS](https://img.shields.io/badge/iOS-16.3%2B-000000?logo=apple&logoColor=white)](#-minimum-requirements)
+[![Device](https://img.shields.io/badge/arm64-iPhone-555555)](#-minimum-requirements)
 [![Engine](https://img.shields.io/badge/ReXGlue-static%20recomp-7c3aed)](https://github.com/rexglue/rexglue-sdk)
 [![Graphics](https://img.shields.io/badge/Vulkan-MoltenVK-e11d48)](https://github.com/KhronosGroup/MoltenVK)
-[![Status](https://img.shields.io/badge/estado-jugable-22c55e)](#-estado)
+[![Status](https://img.shields.io/badge/status-playable-22c55e)](#-status)
 [![License](https://img.shields.io/badge/license-MIT-3b82f6)](LICENSE)
 
-[Estado](#-estado) · [Requisitos](#-requisitos-mínimos) · [Qué aportas tú](#-lo-que-tienes-que-aportar-tú) · [Compilar](#-compilar) · [Rendimiento](#-rendimiento) · [Depurar](#-depurar)
+[Status](#-status) · [Requirements](#-minimum-requirements) · [What you provide](#-what-you-provide) · [Building](#-building) · [Performance](#-performance) · [Debugging](#-debugging)
+
+<sub><a href="README.es.md">Leer en español</a></sub>
 
 </div>
 
 ---
 
 > [!IMPORTANT]
-> **Este repositorio no contiene nada del juego.** Ni el ejecutable, ni datos, ni audio,
-> ni vídeos, ni texturas. Solo el toolchain que convierte **tu** copia en una app de iOS.
-> El `default.xex` lo aportas tú, desde tu propio disco, y no se sube nunca al repo.
+> **This repository contains nothing from the game.** No executable, no data, no audio,
+> no video, no textures. Only the toolchain that turns **your** copy into an iOS app.
+> You supply `default.xex` from your own disc, and it is never committed here.
 
 > [!WARNING]
-> Proyecto de fans, sin ánimo de lucro, sin relación con Bandai Namco, CyberConnect2,
-> VIZ Media ni Microsoft. **No es publicable en la App Store.** Solo sideload.
+> Fan project, non-commercial, not affiliated with Bandai Namco, CyberConnect2,
+> VIZ Media or Microsoft. **Not publishable on the App Store.** Sideload only.
 
 ---
 
-## 📱 Requisitos mínimos
+## 📱 Minimum requirements
 
-| | Mínimo | Recomendado |
+| | Minimum | Recommended |
 |---|---|---|
-| **Dispositivo** | iPhone arm64 con iOS 16.3 (desde iPhone XS/XR) | iPhone 12 o posterior |
-| **iOS** | 16.3 | 17 o posterior |
-| **RAM** | 4 GB — verificado en iPhone 11 | 6 GB o más |
-| **Almacenamiento libre** | 10 GB | 15 GB (7 GB son datos del juego) |
-| **Firma** | Apple ID gratis (caduca a los 7 días) | SideStore / AltStore / certificado |
-| **Extras** | Tu `default.xex` NTSC-U | Mando Bluetooth |
+| **Device** | arm64 iPhone with iOS 16.3 (iPhone XS/XR or newer) | iPhone 12 or newer |
+| **iOS** | 16.3 | 17 or newer |
+| **RAM** | 4 GB — verified on iPhone 11 | 6 GB or more |
+| **Free storage** | 10 GB | 15 GB (7 GB is game data) |
+| **Signing** | Free Apple ID (expires every 7 days) | SideStore / AltStore / certificate |
+| **Extras** | Your own NTSC-U `default.xex` | Bluetooth controller |
 
 > [!NOTE]
-> **Probado en iPhone 11 (A13).** El resto es extrapolación honesta, no una garantía.
-> En dispositivos de 3 GB puede faltar espacio de direcciones si el perfil de firma no
-> incluye `extended-virtual-addressing` — no está probado con este juego.
+> **Tested on iPhone 11 (A13).** Everything else is an honest extrapolation, not a
+> guarantee. On 3 GB devices you may run out of address space unless your signing
+> profile grants `extended-virtual-addressing` — untested with this game.
 
-**Firma:** el `.ipa` sale sin firmar. Con Apple ID gratuito necesitas re-firmar cada
-7 días; con SideStore/AltStore la renovación es automática.
+**Signing:** the `.ipa` ships unsigned. With a free Apple ID you re-sign every 7 days;
+SideStore/AltStore renew it automatically.
 
 ---
 
-## ✅ Estado
+## ✅ Status
 
-Jugable de principio a fin en iPhone 11, a ~30 fps estables (960×540, GPU ~27 ms/frame).
+Playable start to finish on iPhone 11 at a stable ~30 fps (960×540, GPU ~27 ms/frame).
 
-| Parte | Estado |
+| Part | Status |
 |---|---|
-| Arranque, menús, selección de personaje y escenario | ✅ |
-| VS Battle, práctica, HUD, partículas, audio | ✅ |
-| Jutsus definitivos, awakening ("modo bestia"), fin de combate | ✅ |
-| Pantalla de resultados y de Ryos | ✅ |
-| Modo historia | ✅ |
-| Controles táctiles + mando Bluetooth (Xbox/PlayStation/MFi) | ✅ |
-| Game Mode, icono propio | ✅ |
-| 1280×720 | ❌ ~18 fps — techo del SDK, ver [Rendimiento](#-rendimiento) |
-| Detalles visuales menores | ⚠️ sin catalogar |
+| Boot, menus, character and stage select | ✅ |
+| VS Battle, practice, HUD, particles, audio | ✅ |
+| Ultimate jutsus, awakening ("beast mode"), end of match | ✅ |
+| Results screen and Ryos screen | ✅ |
+| Story mode | ✅ |
+| Touch controls + Bluetooth controller (Xbox/PlayStation/MFi) | ✅ |
+| Game Mode, custom app icon | ✅ |
+| 1280×720 | ❌ ~18 fps — SDK ceiling, see [Performance](#-performance) |
+| Minor visual artefacts | ⚠️ uncatalogued |
 
 ---
 
-## 📦 Lo que tienes que aportar tú
+## 📦 What you provide
 
-| Qué | Detalle | ¿Va al repo? |
+| Item | Detail | Committed? |
 |---|---|---|
-| `default.xex` | 11 218 944 bytes · SHA-1 `f7ad65e2…55e9f` · tu disco **NTSC-U** | ❌ nunca |
-| `data/` + `datafb/` | ~7 GB de datos del juego | ❌ nunca |
-| Firma de la app | SideStore, AltStore, Sideloadly o tu certificado | — |
-| Un Mac **o** una cuenta de Codemagic | Solo para compilar | — |
+| `default.xex` | 11,218,944 bytes · SHA-1 `f7ad65e2…55e9f` · from your **NTSC-U** disc | ❌ never |
+| `data/` + `datafb/` | ~7 GB of game data | ❌ never |
+| App signing | SideStore, AltStore, Sideloadly or your own certificate | — |
+| A Mac **or** a Codemagic account | Build only | — |
 
-El hash es obligatorio: el código se recompila desde un ejecutable concreto.
-Si no coincide, el port no arranca — no es configuración, es otro binario.
+The hash is mandatory: the code is recompiled from one specific executable.
+If it does not match, the port will not boot — that is not a config issue, it is a
+different binary.
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
 | Title ID | `4E4D085C` |
 | Media ID | `2576927D` |
 | `default.xex` SHA-1 | `f7ad65e26a00df6c29c9d34b291819593e455e9f` |
-| `default.xex` tamaño | 11 218 944 bytes |
+| `default.xex` size | 11,218,944 bytes |
 
 ```bash
 extract-xiso -x "Naruto Storm 3 Full Burst.iso" -d app/game
@@ -98,130 +101,130 @@ shasum -a 1 app/game/default.xex
 # f7ad65e26a00df6c29c9d34b291819593e455e9f
 ```
 
-`app/game/` está en `.gitignore`: lo que pongas ahí **no** se commitea por accidente.
+`app/game/` is in `.gitignore`: whatever you drop there will not be committed by accident.
 
 ---
 
-## 🗂️ Qué hay en este repositorio
+## 🗂️ Repository layout
 
 ```
 ns3fb-ios/
 ├── app/
-│   ├── CMakeLists.txt              target iOS, embebe las dylibs del SDK
-│   ├── game/                       ← TU extracción va aquí (ignorado por git)
-│   ├── generated/                  ← código generado por el codegen (ignorado)
-│   ├── platform/ios/               Info.plist, entitlements, iconos, memext/
+│   ├── CMakeLists.txt              iOS target, embeds the SDK dylibs
+│   ├── game/                       ← YOUR extraction goes here (git-ignored)
+│   ├── generated/                  ← codegen output (git-ignored)
+│   ├── platform/ios/               Info.plist, entitlements, icons, memext/
 │   └── src/
 │       ├── main.cpp                entry point
-│       └── ns3fb_app.h             rutas iOS, defaults de cvars, marcadores
+│       └── ns3fb_app.h             iOS paths, cvar defaults, markers
 ├── ci/
-│   ├── patches.list                los 11 parches del SDK, en orden
-│   ├── rexglue-*.patch             los parches
-│   ├── entrypoint_seeds.txt        193 funciones que el codegen no descubre
-│   └── game/                       ← vacío: aquí no viaja el ejecutable
+│   ├── patches.list                the 11 SDK patches, in order
+│   ├── rexglue-*.patch             the patches themselves
+│   ├── entrypoint_seeds.txt        193 functions the codegen cannot discover
+│   └── game/                       ← empty: no executable travels here
 ├── scripts/
-│   ├── 00-fetch-sdk.sh             clona el SDK y aplica el parche iOS + ci/
-│   ├── 01-codegen.sh               recompila TU default.xex a C++
-│   ├── 02-seed-entrypoints.py      aplica entrypoint_seeds.txt al manifest
-│   ├── 03-build-app.sh             compila la app (y genera los iconos)
-│   └── make-ipa.sh                 empaqueta NS3FB.ipa
-├── tools/xex/                      unxex.py y find_callback_thunks.py
+│   ├── 00-fetch-sdk.sh             clones the SDK, applies the iOS + ci/ patches
+│   ├── 01-codegen.sh               recompiles YOUR default.xex to C++
+│   ├── 02-seed-entrypoints.py      applies entrypoint_seeds.txt to the manifest
+│   ├── 03-build-app.sh             builds the app (and generates the icons)
+│   └── make-ipa.sh                 packages NS3FB.ipa
+├── tools/xex/                      unxex.py and find_callback_thunks.py
 ├── docs/                           TROUBLESHOOTING, PERF_MATRIX, RAM_EXTENSION_PLAN
-├── codemagic.yaml                  CI sin Mac (iOS unsigned IPA)
+├── codemagic.yaml                  no-Mac CI (unsigned IPA)
 └── LICENSE / CREDITS.md
 ```
 
 ---
 
-## 🔨 Compilar
+## 🔨 Building
 
-### Opción A — en tu Mac
+### Option A — on your Mac
 
-Requiere macOS 13+, Xcode 15+, `cmake`, `ninja`, `python3`.
+Requires macOS 13+, Xcode 15+, `cmake`, `ninja`, `python3`.
 
 ```bash
 chmod +x scripts/*.sh
-cp -R /ruta/a/tu/extraccion/* app/game/    # default.xex + data/ + datafb/
-./scripts/00-fetch-sdk.sh                  # ~30-40 min la primera vez
-./scripts/01-codegen.sh                    # recompila el .xex (~20-30 min)
+cp -R /path/to/your/extraction/* app/game/   # default.xex + data/ + datafb/
+./scripts/00-fetch-sdk.sh                    # ~30-40 min the first time
+./scripts/01-codegen.sh                      # recompiles the .xex (~20-30 min)
 ./scripts/03-build-app.sh
-./scripts/make-ipa.sh                      # NS3FB.ipa sin firmar
+./scripts/make-ipa.sh                        # unsigned NS3FB.ipa
 ```
 
-### Opción B — en la nube, sin Mac (Codemagic)
+### Option B — in the cloud, no Mac (Codemagic)
 
-El repo trae `codemagic.yaml` con el workflow `ios-unsigned`. **Un repo público no puede
-compilar aquí**: el CI necesita el `default.xex` en el árbol de trabajo y ese archivo no
-está en el repo. La forma correcta es trabajar sobre una **copia privada**:
+This repo ships `codemagic.yaml` with the `ios-unsigned` workflow. **A public repo
+cannot build here**: CI needs `default.xex` in the working tree and that file is not
+in the repo. The correct flow is to work on a **private copy**:
 
 ```bash
 git clone https://github.com/juanxd2006/ns3fb-ios.git
 cd ns3fb-ios
 # GitHub: Settings → Danger Zone → Change visibility → Private
 
-cp "/ruta/a/tu/extraccion/default.xex" ci/game/default.xex
-git add -f ci/game/default.xex        # -f: está en .gitignore a propósito
-git commit -m "Game executable for CI (copia privada)"
+cp "/path/to/your/extraction/default.xex" ci/game/default.xex
+git add -f ci/game/default.xex        # -f: it is git-ignored on purpose
+git commit -m "Game executable for CI (private copy)"
 git push
 ```
 
-Luego conecta el repo en Codemagic (*Add application* → GitHub) y lanza `ios-unsigned`.
+Then connect the repo in Codemagic (*Add application* → GitHub) and run `ios-unsigned`.
 
-| Aspecto | Realidad |
+| Aspect | Reality |
 |---|---|
-| Build frío | 45–60 min (compila el SDK entero) |
-| Build con caché caliente | 20–30 min |
-| Tocar cualquier archivo de `ci/` | Invalida la caché del SDK → build frío |
-| Artefacto | `NS3FB.ipa` sin firmar |
-| Workflow `sdk-cache` | Solo calienta la caché del SDK (~2 min si ya está) |
+| Cold build | 45–60 min (compiles the whole SDK) |
+| Warm-cache build | 20–30 min |
+| Touching any file under `ci/` | Invalidates the SDK cache → cold build |
+| Artifact | unsigned `NS3FB.ipa` |
+| `sdk-cache` workflow | Warms the SDK cache only (~2 min when warm) |
 
-En el log debe aparecer `==> Cached ReXGlue SDK found, skipping build`.
-Si no aparece, estás pagando el build frío otra vez.
+The log must contain `==> Cached ReXGlue SDK found, skipping build`.
+If it does not, you are paying for a cold build again.
 
 ---
 
-## 📲 Instalar y firmar
+## 📲 Installing and signing
 
-El `.ipa` sale **sin firmar**:
+The `.ipa` ships **unsigned**:
 
-- **SideStore / AltStore** — firma con tu Apple ID, renovación automática cada 7 días.
-- **Sideloadly** — Apple ID gratis, caduca a los 7 días.
+- **SideStore / AltStore** — signs with your Apple ID, auto-renews every 7 days.
+- **Sideloadly** — free Apple ID, expires after 7 days.
   *Advanced Options → Enable File Sharing*.
-- **Certificado de desarrollador** propio:
+- **Your own developer certificate:**
   ```bash
-  PROFILE=~/ruta/al.mobileprovision ./scripts/sign-and-install.sh
+  PROFILE=~/path/to/profile.mobileprovision ./scripts/sign-and-install.sh
   ```
 
 > [!TIP]
-> Para que **cambie el icono** hay que desinstalar antes de reinstalar: iOS cachea el
-> icono por bundle ID.
+> To make an **icon change** show up you must uninstall before reinstalling:
+> iOS caches icons per bundle ID.
 
-### Copiar los datos del juego al iPhone
+### Copying game data to the iPhone
 
-1. Abre la app una vez y ciérrala (crea las carpetas).
-2. Finder → tu iPhone → **Archivos** → *En mi iPhone / NS3FB*:
+1. Open the app once, then close it (it creates its folders).
+2. Finder → your iPhone → **Files** → *On My iPhone / NS3FB*:
 
 ```
 NS3FB/
 ├── game/          ← default.xex, data/, datafb/
-├── userdata/      ← saves y logs (automático)
-└── ns3fb.toml     ← ajustes (automático, editable)
+├── userdata/      ← saves and logs (automatic)
+└── ns3fb.toml     ← settings (automatic, editable)
 ```
 
-Opcional: `scripts/inject-game-files.sh` mete los datos dentro del `.ipa`
-(→ ~3-5 GB por instalación). Para iterar sobre la app, mejor sin datos.
+Optional: `scripts/inject-game-files.sh` packs the data into the `.ipa`
+(→ ~3-5 GB per install). If you are iterating on the app, keep the IPA data-free.
 
 ---
 
-## ⚙️ Ajustes
+## ⚙️ Settings
 
-`NS3FB/Documents/ns3fb.toml`, editable desde la app Archivos; aplica al reiniciar.
-Esta es la configuración medida:
+`NS3FB/Documents/ns3fb.toml`, editable from the Files app; takes effect on restart.
+This is the measured configuration:
 
 ```toml
 video_mode_width = 960
 video_mode_height = 540
-present_effect = "cas"          # o "fsr"
+present_effect = "cas"          # or "fsr"
 present_cas_additional_sharpness = 0.4
 msaa_override = 0
 direct_host_resolve = false
@@ -236,65 +239,64 @@ readback_memexport = false
 texture_cache_memory_limit_soft = 320
 texture_cache_memory_limit_hard = 640
 texture_cache_memory_limit_rtt = 24
-framerate_limit = 30            # el original está atado a 30
+framerate_limit = 30            # the original is locked to 30
 vsync = true
 ```
 
-El juego original corre a 30 fps fijos: a 60 va al doble de velocidad.
+The original game is locked to 30 fps: at 60 it runs at double speed.
 
 ---
 
-## 📊 Rendimiento
+## 📊 Performance
 
 iPhone 11 (A13), Metal HUD:
 
-| Resolución | GPU (ms) | Compute (ms) | Fragment (ms) | FPS |
+| Resolution | GPU (ms) | Compute (ms) | Fragment (ms) | FPS |
 |---|---|---|---|---|
-| 1280×720 | 54–55 | 28,5 | 19,0 | 18,2 |
+| 1280×720 | 54–55 | 28.5 | 19.0 | 18.2 |
 | 960×540 | 22–27 | 10–11 | 11–13 | 30 |
 
-A 720p el **51 % del frame** son los compute shaders de volcado de EDRAM
-(~129 compute encoders por frame): coste fijo por resolve, no ajustable por
-configuración. Por eso 720p está descartado salvo que se escriban shaders de
-resolve directo (proyecto aparte).
+At 720p, **51% of the frame** is the EDRAM dump compute shaders (~129 compute encoders
+per frame): a fixed per-resolve cost, not tunable through configuration. That is why
+720p is off the table unless someone writes direct resolve shaders (a separate project).
 
-**Ya medido y descartado**, para que nadie lo repita:
+**Already measured and ruled out**, so nobody repeats it:
 
-- `msaa_override = 1` no baja el compute (28,05 → 26,39 ms) y **corrompe la imagen**.
-- `direct_host_resolve` no acelera: `TryResolveCopyDirectly()` acaba en
-  `return DumpRenderTargets(...)`. Mismo stub en D3D12.
-- `execute_unclipped_draw_vs_on_cpu_with_scissor` no mueve el compute.
-- Ruta `fsi` es más lenta en este juego. `keep_pass_open` da ~7 %, descartado.
+- `msaa_override = 1` does not reduce compute (28.05 → 26.39 ms) and **corrupts the image**.
+- `direct_host_resolve` does not help: `TryResolveCopyDirectly()` ends in
+  `return DumpRenderTargets(...)`. Same stub in D3D12.
+- `execute_unclipped_draw_vs_on_cpu_with_scissor` does not move the compute cost.
+- The `fsi` path is slower with this game. `keep_pass_open` gives ~7%, discarded.
 
 ---
 
-## 🔍 Depurar
+## 🔍 Debugging
 
-Todo el diagnóstico es por log, sin recompilar. En `NS3FB/Documents/` basta duplicar y
-renombrar archivos:
+All diagnostics are log-based, no rebuild needed. In `NS3FB/Documents/`, just duplicate
+and rename a file:
 
-| Marcador | Efecto |
+| Marker | Effect |
 |---|---|
-| `diag_on.txt` | Enciende `NS3FB-*` (>200 líneas/s, el juego deja de responder) |
-| `msaa1.txt` / `msaa2.txt` / `msaa4.txt` | Fuerza `msaa_override` |
-| `ztest_off.txt` / `blend_off.txt` | Overrides de diagnóstico |
-| `mvk.txt` | Líneas `MVK_CONFIG_XXX=valor` |
+| `diag_on.txt` | Enables `NS3FB-*` (>200 lines/s, the game stops responding) |
+| `msaa1.txt` / `msaa2.txt` / `msaa4.txt` | Forces `msaa_override` |
+| `ztest_off.txt` / `blend_off.txt` | Diagnostic overrides |
+| `mvk.txt` | `MVK_CONFIG_XXX=value` lines |
 
-Los marcadores pisan el `ns3fb.toml`.
+Markers override `ns3fb.toml`.
 
-### `NS3FB-TRAP` — el bug que queda
+### `NS3FB-TRAP` — the remaining bug class
 
 ```
 NS3FB-TRAP 0x825A7258 unregistered guest function, continuing as no-op
 ```
 
-El juego llamó a una función que el codegen no descubrió (no está en `.pdata`, solo se
-alcanza por punteros construidos en runtime) y se ejecutó como no-op. Síntomas típicos:
-una animación que se corta, un menú que no avanza, una pantalla que se queda cargando.
+The game called a function the codegen never discovered (not in `.pdata`, only reachable
+through runtime-built pointers) and it ran as a no-op. Typical symptoms: an animation
+cutting short, a menu that will not advance, a screen stuck loading.
 
-Se arregla sembrando la dirección en `ci/entrypoint_seeds.txt` (una por línea,
-`0xXXXXXXXX`, con un comentario de fecha y síntoma). **Ya hay 193**; con eso los traps
-bajaron de 10 por sesión a 0–4.
+Fix: seed the address in `ci/entrypoint_seeds.txt` (one per line, `0xXXXXXXXX`, with a
+comment recording date and symptom). **193 are already seeded**; that brought traps down
+from 10 per session to 0–4.
 
 ```bash
 python3 tools/xex/unxex.py app/game/default.xex /tmp/image.bin
@@ -303,35 +305,35 @@ python3 tools/xex/find_callback_thunks.py /tmp/image.bin
 
 ---
 
-## 🧠 Memoria y entitlements
+## 🧠 Memory and entitlements
 
-`ns3fb.entitlements` pide `com.apple.developer.kernel.extended-virtual-addressing`: el
-mapa de memoria del invitado necesita ~4.5 GB contiguos. Un Apple ID gratuito **no**
-concede ese entitlement, así que en dispositivos de 3 GB verás *"not enough free address
-space"* salvo con TrollStore, jailbreak o cuenta de pago. Hoy la app usa ~1,33 GB de 3 GB.
+`ns3fb.entitlements` requests `com.apple.developer.kernel.extended-virtual-addressing`:
+the guest memory map needs ~4.5 GB of contiguous reservation. A free Apple ID does **not**
+grant that entitlement, so on 3 GB devices you will see *"not enough free address space"*
+unless you use TrollStore, a jailbreak or a paid account. Today the app uses ~1.33 GB of 3 GB.
 
-`sustained-execution` e `increased-memory-limit` están documentados y **comentados**: con
-Apple ID gratis la firma falla si los dejas activos.
+`sustained-execution` and `increased-memory-limit` are documented and **commented out**:
+with a free Apple ID, signing fails if you leave them enabled.
 
 ---
 
 ## ⚖️ Legal
 
-- Proyecto de fans, sin ánimo de lucro. Sin relación con Bandai Namco, CyberConnect2,
-  VIZ Media ni Microsoft. *Naruto* y *Naruto Shippuden: Ultimate Ninja Storm 3 Full
-  Burst* son marcas y obras de sus titulares.
-- Este repositorio **no incluye ni distribuye** archivos del juego. El código generado
-  por el codegen es una obra derivada de **tu** `default.xex`: no lo redistribuyas.
-- **No abras issues pidiendo o compartiendo archivos del juego.** Se cierran sin respuesta.
-- No publicable en la App Store. Solo sideload / TestFlight interno.
-- Licencia del código: [LICENSE](LICENSE) · Terceros: [CREDITS.md](CREDITS.md)
+- Fan project, non-commercial. Not affiliated with Bandai Namco, CyberConnect2,
+  VIZ Media or Microsoft. *Naruto* and *Naruto Shippuden: Ultimate Ninja Storm 3 Full
+  Burst* are trademarks and works of their respective owners.
+- This repository **does not include or distribute** any game files. The code produced
+  by the codegen is a derivative work of **your** `default.xex`: do not redistribute it.
+- **Do not open issues asking for or sharing game files.** They are closed without reply.
+- Not publishable on the App Store. Sideload / internal TestFlight only.
+- Code license: [LICENSE](LICENSE) · Third parties: [CREDITS.md](CREDITS.md)
 
-## 🙏 Créditos
+## 🙏 Credits
 
-El mérito de que esto sea posible es de **DevZer0D4Y** (capa iOS del SDK ReXGlue),
-**ReXGlue**, **Xenia**, **XenonRecomp**, **XenosRecomp** y **MoltenVK**.
-Detalle completo en [CREDITS.md](CREDITS.md).
+This would not exist without **DevZer0D4Y** (iOS layer of the ReXGlue SDK), **ReXGlue**,
+**Xenia**, **XenonRecomp**, **XenosRecomp** and **MoltenVK**.
+Full detail in [CREDITS.md](CREDITS.md).
 
 <div align="center">
-<sub>Hecho por fans, para fans. Trae tu propio disco.</sub>
+<sub>Made by fans, for fans. Bring your own disc.</sub>
 </div>
