@@ -47,3 +47,10 @@ rexglue-diag-overrides.patch
 # comportamiento. Requiere rexglue-rt-stats.patch (usa g_ns3fb_draw_total y
 # el bloque de claves de pase).
 rexglue-guest-state.patch
+# Arreglo de un bug REAL del SDK que deja el 3D negro con el HUD visible: el
+# traductor SPIR-V leia exp_adjust de la palabra 4 de la fetch constant (donde
+# esta lod_bias) en vez de la palabra 3, y multiplicaba cada muestreo de textura
+# por 2^(lod_bias/2). Con lod_bias negativo, el mundo sale casi negro y el HUD,
+# que no lleva bias, se ve perfecto. Es el mismo arreglo que ya tiene Xenia
+# Canary; el upstream lo cerro como "not planned" (issue #456).
+rexglue-tfetch-expadjust.patch
