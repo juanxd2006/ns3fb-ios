@@ -1,0 +1,90 @@
+diff --git a/src/input/touch/touch_layout.cpp b/src/input/touch/touch_layout.cpp
+index 870d106..d54265f 100644
+--- a/src/input/touch/touch_layout.cpp
++++ b/src/input/touch/touch_layout.cpp
+@@ -52,19 +52,37 @@ constexpr float kHoldSeconds = 0.30f;
+ constexpr float kHoldDragSeconds = 0.16f;
+ constexpr float kDoubleTapSeconds = 0.24f;
+ 
+-// XeniOS "FPS Compact" positions, normalized to the overlay.
+-constexpr TouchRect kMoveStickFrame = {0.055f, 0.56f, 0.190f, 0.315f};
+-constexpr TouchRect kLookZoneFrame = {0.0f, 0.0f, 1.0f, 1.0f};
+-constexpr TouchRect kBackFrame = {0.390f, 0.045f, 0.080f, 0.112f};
+-constexpr TouchRect kStartFrame = {0.495f, 0.045f, 0.085f, 0.112f};
+-constexpr TouchRect kLeftBumperFrame = {0.660f, 0.050f, 0.085f, 0.112f};
+-constexpr TouchRect kRightBumperFrame = {0.765f, 0.050f, 0.085f, 0.112f};
+-constexpr TouchRect kLeftTriggerFrame = {0.095f, 0.405f, 0.120f, 0.110f};
+-constexpr TouchRect kButtonYFrame = {0.760f, 0.455f, 0.065f, 0.115f};
+-constexpr TouchRect kButtonXFrame = {0.700f, 0.585f, 0.065f, 0.115f};
+-constexpr TouchRect kButtonBFrame = {0.820f, 0.585f, 0.065f, 0.115f};
+-constexpr TouchRect kButtonAFrame = {0.760f, 0.715f, 0.065f, 0.115f};
+-constexpr TouchRect kRightTriggerFrame = {0.860f, 0.405f, 0.120f, 0.110f};
++// Fighting-game layout, normalized to the overlay (landscape).
++// Modelled on the official STORM mobile arrangement: big move stick bottom-left,
++// attack diamond on the right with the primary button largest, support characters
++// stacked on the right edge, item slots along the bottom, camera limited to a band
++// so a stray swipe no longer steals the whole screen.
++constexpr float kRefWidth = 844.0f;   // iPhone landscape reference, for circle sizing
++constexpr float kRefHeight = 390.0f;
++
++// Frame for a control of `pixels` diameter, centred at (cx, cy) in normalized space.
++constexpr TouchRect CenteredFrame(float cx, float cy, float pixels) {
++  const float w = pixels / kRefWidth;
++  const float h = pixels / kRefHeight;
++  return {cx - w * 0.5f, cy - h * 0.5f, w, h};
++}
++
++constexpr TouchRect kMoveStickFrame = {0.018f, 0.480f, 0.215f, 0.465f};
++constexpr TouchRect kLookZoneFrame = {0.500f, 0.190f, 0.400f, 0.175f};
++constexpr TouchRect kBackFrame = CenteredFrame(0.432f, 0.070f, 48.0f);
++constexpr TouchRect kStartFrame = CenteredFrame(0.500f, 0.070f, 48.0f);
++constexpr TouchRect kLeftBumperFrame = CenteredFrame(0.950f, 0.430f, 64.0f);
++constexpr TouchRect kRightBumperFrame = CenteredFrame(0.950f, 0.220f, 64.0f);
++constexpr TouchRect kLeftTriggerFrame = CenteredFrame(0.060f, 0.115f, 56.0f);
++constexpr TouchRect kRightTriggerFrame = CenteredFrame(0.925f, 0.085f, 56.0f);
++constexpr TouchRect kButtonYFrame = CenteredFrame(0.700f, 0.470f, 72.0f);
++constexpr TouchRect kButtonXFrame = CenteredFrame(0.840f, 0.470f, 76.0f);
++constexpr TouchRect kButtonBFrame = CenteredFrame(0.690f, 0.680f, 72.0f);
++constexpr TouchRect kButtonAFrame = CenteredFrame(0.840f, 0.755f, 88.0f);
++constexpr TouchRect kItemSlot1Frame = CenteredFrame(0.400f, 0.900f, 52.0f);
++constexpr TouchRect kItemSlot2Frame = CenteredFrame(0.475f, 0.900f, 52.0f);
++constexpr TouchRect kItemSlot3Frame = CenteredFrame(0.550f, 0.900f, 52.0f);
++constexpr TouchRect kItemSlot4Frame = CenteredFrame(0.625f, 0.900f, 52.0f);
+ 
+ TouchControlDefinition MakeActionButton(const char* identifier, TouchAction action,
+                                         const TouchRect& normalized_frame,
+@@ -143,8 +161,8 @@ TouchRuntimeModel& GetTouchRuntimeModel() {
+ 
+ TouchLayoutModel CreateDefaultTouchLayout() {
+   TouchLayoutModel layout;
+-  layout.layout_id = "fps_compact";
+-  layout.display_name = "FPS Compact";
++  layout.layout_id = "storm_mobile";
++  layout.display_name = "Storm Mobile";
+ 
+   layout.controls.push_back(MakeMoveStick());
+   layout.controls.push_back(MakeLookZone());
+@@ -170,6 +188,23 @@ TouchLayoutModel CreateDefaultTouchLayout() {
+   layout.controls.push_back(std::move(b_button));
+   layout.controls.push_back(
+       MakeActionButton("a_button", TouchAction::kButtonA, kButtonAFrame, 238));
++  // Item slots: the guest maps items to the D-pad, so four small buttons along the
++  // bottom stand in for them. The labels are the inventory positions, 1-4.
++  auto make_item_slot = [](const char* identifier, TouchAction action, const TouchRect& frame,
++                           const char* label) {
++    TouchControlDefinition control = MakeActionButton(identifier, action, frame, 231);
++    control.label = label;
++    return control;
++  };
++  layout.controls.push_back(
++      make_item_slot("item_slot_1", TouchAction::kDpadLeft, kItemSlot1Frame, "1"));
++  layout.controls.push_back(
++      make_item_slot("item_slot_2", TouchAction::kDpadUp, kItemSlot2Frame, "2"));
++  layout.controls.push_back(
++      make_item_slot("item_slot_3", TouchAction::kDpadRight, kItemSlot3Frame, "3"));
++  layout.controls.push_back(
++      make_item_slot("item_slot_4", TouchAction::kDpadDown, kItemSlot4Frame, "4"));
++
+   layout.controls.push_back(MakeActionButton("right_trigger_button", TouchAction::kRightTrigger,
+                                              kRightTriggerFrame, 242));
+   return layout;
