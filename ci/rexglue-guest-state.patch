@@ -1,14 +1,45 @@
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -52,6 +52,7 @@
+@@ -52,8 +52,18 @@
  #include <rex/ui/vulkan/util.h>
  
  #include <atomic>
 +#include <chrono>
  #include <string>
  
++// NS3FB: interruptor maestro del diagnostico. Sin el, el emulador no escribe
++// nada por draw: la instrumentacion llega a mas de 200 lineas por segundo y
++// hace el juego injugable (los botones dejan de responder).
++static bool Ns3fbDiag() {
++  static const bool enabled = REXCVAR_GET(ns3fb_diag);
++  return enabled;
++}
++
++
  // Legacy backend compatibility aliases for shared readback controls.
-@@ -3865,6 +3866,276 @@
+ REXCVAR_DEFINE_BOOL(vulkan_readback_resolve, false, "GPU/Vulkan",
+                     "Read render-to-texture results on the CPU")
+@@ -3725,6 +3735,9 @@
+ }  // namespace
+ 
+ static void Ns3fbLogDrawStatsIfNeeded() {
++  if (!Ns3fbDiag()) {
++    return;
++  }
+   static uint64_t last_logged_total = 0;
+   const uint64_t total = g_ns3fb_draw_total.load(std::memory_order_relaxed);
+   if (total - last_logged_total < 300) {
+@@ -3803,6 +3816,9 @@
+ 
+ static void Ns3fbNoteRenderPassKey(const VulkanRenderTargetCache::RenderPassKey& key,
+                                    uint32_t index_count, bool indexed) {
++  if (!Ns3fbDiag()) {
++    return;
++  }
+   // Registrar el tipo de pase la primera vez que se ve, con sus formatos.
+   static uint32_t ns3fb_seen_keys[24];
+   static size_t ns3fb_seen_count = 0;
+@@ -3865,6 +3881,282 @@
    }
  }
  
@@ -99,6 +130,9 @@
 +
 +static void Ns3fbNoteGuestState(const VulkanRenderTargetCache::RenderPassKey& key,
 +                                const RegisterFile& regs, uint32_t index_count, bool indexed) {
++  if (!Ns3fbDiag()) {
++    return;
++  }
 +  const auto color_mask = regs.Get<reg::RB_COLOR_MASK>();
 +  const auto blend_0 = regs.Get<reg::RB_BLENDCONTROL>(reg::RB_BLENDCONTROL::rt_register_indices[0]);
 +  const auto depth_control = regs.Get<reg::RB_DEPTHCONTROL>();
@@ -227,6 +261,9 @@
 +//   wxh     size_2d + 1 (el registro guarda tamano - 1)
 +static void Ns3fbNoteTextures(const VulkanRenderTargetCache::RenderPassKey& key,
 +                              const RegisterFile& regs, uint32_t used_texture_mask) {
++  if (!Ns3fbDiag()) {
++    return;
++  }
 +  static uint32_t ns3fb_tex_seen[64] = {};
 +  static size_t ns3fb_tex_seen_count = 0;
 +  if (!used_texture_mask) {
@@ -285,7 +322,7 @@
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                                         IndexBufferInfo* index_buffer_info,
                                         bool major_mode_explicit) {
-@@ -4126,6 +4397,10 @@
+@@ -4126,6 +4418,10 @@
        (pixel_shader != nullptr ? pixel_shader->GetUsedTextureMaskAfterTranslation() : 0);
    texture_cache_->RequestTextures(used_texture_mask);
  
@@ -296,7 +333,7 @@
    const VulkanPipelineCache::PipelineLayoutProvider* pipeline_layout_provider;
    // Set up the render targets - this may perform dispatches and draws.
    if (!render_target_cache_->Update(is_rasterization_done, normalized_depth_control,
-@@ -4137,6 +4412,11 @@
+@@ -4137,6 +4433,11 @@
    Ns3fbNoteRenderPassKey(render_target_cache_->last_update_render_pass_key(), index_count,
                           index_buffer_info != nullptr);
  
@@ -320,7 +357,7 @@
    if (transfer_vertex_buffer_pool_) {
      transfer_vertex_buffer_pool_->Reclaim(command_processor_.GetCompletedSubmission());
    }
-@@ -1124,6 +1127,149 @@
+@@ -1124,6 +1127,164 @@
    }
  }
  
@@ -432,7 +469,19 @@
 +      uint32_t(sum / pixels), sample[0], sample[1], sample[2], sample[3]);
 +}
 +
++// NS3FB: mismo interruptor, local a esta unidad. Sin el, cada envio escanea
++// hasta 8 rangos x 4096 muestras y eso si se nota.
++static bool Ns3fbMemDiag() {
++  static const bool enabled = REXCVAR_GET(ns3fb_diag);
++  return enabled;
++}
++
 +void Ns3fbScanPendingResolvedRanges() {
++  if (!Ns3fbMemDiag()) {
++    // Con el diagnostico apagado no se encola ni se escanea nada.
++    g_ns3fb_pending_count = 0;
++    return;
++  }
 +  if (!g_ns3fb_memory) {
 +    return;
 +  }
@@ -454,6 +503,9 @@
 +                                    uint32_t color_base, uint32_t depth_base, uint32_t width_div_8,
 +                                    uint32_t height_div_8) {
 +  g_ns3fb_memory = &memory;
++  if (!Ns3fbMemDiag()) {
++    return;
++  }
 +  if (g_ns3fb_pending_count >= kNs3fbPendingRanges) {
 +    ++g_ns3fb_pending_dropped;
 +    return;
@@ -470,7 +522,7 @@
  bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
                                        VulkanSharedMemory& shared_memory,
                                        VulkanTextureCache& texture_cache,
-@@ -1140,6 +1286,136 @@
+@@ -1140,6 +1301,136 @@
      return false;
    }
  
@@ -495,7 +547,7 @@
 +  // saber si la profundidad contra la que testea el mundo se limpia a 0 (cerca)
 +  // o a 1 (lejos): con zfunc=lessEqual, limpiar a 0 hace que no pase ni un
 +  // fragmento.
-+  {
++  if (Ns3fbDiag()) {
 +    static uint64_t ns3fb_res_total = 0;
 +    static uint64_t ns3fb_res_discarded = 0;
 +    constexpr size_t kNs3fbResSigSlots = 96;
@@ -607,7 +659,7 @@
    // Nothing to copy/clear.
    if (!resolve_info.coordinate_info.width_div_8 || !resolve_info.height_div_8) {
      return true;
-@@ -1290,6 +1566,14 @@
+@@ -1290,6 +1581,14 @@
                                              resolve_info.copy_dest_extent_length);
            written_address_out = resolve_info.copy_dest_extent_start;
            written_length_out = resolve_info.copy_dest_extent_length;
@@ -624,10 +676,17 @@
        }
 --- a/src/graphics/pipeline/render_target/cache.cpp
 +++ b/src/graphics/pipeline/render_target/cache.cpp
-@@ -658,6 +658,56 @@
+@@ -658,6 +658,63 @@
                                         rt_base);
    }
  
++  // NS3FB: mismo interruptor que en command_processor.cpp, pero local a esta
++  // unidad (Ns3fbDiag es static de la otra).
++  auto Ns3fbRangeDiag = []() {
++    static const bool enabled = REXCVAR_GET(ns3fb_diag);
++    return enabled;
++  };
++
 +  // --- NS3FB: rangos EDRAM que reclama cada pase ---------------------------
 +  //
 +  // Antes de cambiar la propiedad de los tiles, se registra que rango reclama
@@ -644,7 +703,7 @@
 +  //
 +  // Si sum se acerca a 2048 (kEdramTileCount) con un solo target, ese pase
 +  // esta reclamando la EDRAM entera.
-+  {
++  if (Ns3fbRangeDiag()) {
 +    static uint32_t ns3fb_range_seen[64] = {};
 +    static size_t ns3fb_range_seen_count = 0;
 +    uint32_t ns3fb_range_sig = pitch_tiles_at_32bpp * 73856093u ^
