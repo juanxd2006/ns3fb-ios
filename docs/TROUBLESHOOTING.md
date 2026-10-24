@@ -194,24 +194,39 @@ de 16 tipos de pase en una sesión, cosa que hoy no pasa.
 
 **Tercero, ¿el pase puede escribir color?**
 
-Una línea por tipo de pase, y **otra cada vez que su estado cambia** (`rev=2`,
-`rev=3`…):
+**No hay «un estado del pase».** Un mismo pase se usa para varias cosas y su
+estado cambia dentro del propio frame: en este juego la clave `0x1C` aparece con
+tres estados distintos (contenido con blend y z test, overlay 2D con z test
+apagado, y clear con `cmask=0` y scissor 16×16). Registrarlo una vez, o por
+«revisiones» con tope, deja el resto de la sesión a ciegas.
+
+Lo que se registra es el **conjunto de estados distintos** de cada clave, sin
+tope por clave:
 
 ```
-NS3FB-STATE key=0x… rev=1 sup=0 cmask=0x… bl=src/op/dst z=en/wr/func clip_dis=…
-            dxclip=… cull_f=… cull_b=… face=… vp=xs,xo,ys,yo sci=tl_x,tl_y br_x,br_y
-NS3FB-TGT   key=0x… rev=1 c0_base=… c0_fmt=… c1_base=… c1_fmt=… d_base=…
-            d_fmt=… pitch=… msaa=…
+NS3FB-STATE   key=0x… sig=0x… t_ms=… at=… cmask=0x… bl=src/op/dst
+              z=en/wr/func clip_dis=… dxclip=… cull_f=… cull_b=… face=…
+              vp=xs,xo,ys,yo sci=tl_x,tl_y br_x,br_y
+NS3FB-TGT     key=0x… sig=0x… c0_base=… c0_fmt=… c1_base=… c1_fmt=…
+              d_base=… d_fmt=… pitch=… msaa=…
+
+NS3FB-SIGSTAT key=0x… sig=0x… draws=… verts=… vmin=… vmax=…
 ```
 
-**Las revisiones no son adorno.** La clave de pase solo codifica formatos y
-adjuntos: **no** incluye `zfunc`, `z_write`, la máscara de color ni el blend. El
-mismo pase puede tener un estado en la intro y otro distinto en la selección de
-personaje. Si solo se vuelca la primera vez, se acaba juzgando una pantalla con
-el estado de otra — pasó exactamente eso en este proyecto.
+`NS3FB-STATE` y `NS3FB-TGT` salen **una sola vez por cada estado distinto**. Si
+la tabla se llena (128 estados), `NS3FB-SIGSTAT overflow=N` lo dice en vez de
+perderlo en silencio.
 
-`sup=` cuenta los cambios que ya no se vuelcan porque la clave llegó al tope de
-6 revisiones. Si `sup>0`, esa línea **ya no describe el estado actual**.
+**`NS3FB-SIGSTAT` es la línea que hay que mirar.** Cada 1500 draws cuenta, por
+estado, cuántos draws y vértices lleva y el **mínimo y máximo de vértices por
+draw**. Eso atribuye cada estado a su función sin adivinar:
+
+- `vmax` de miles → es el **mundo**.
+- `vmax` de 3–4 → es **HUD o post-proceso**.
+
+Cruza el `sig=` que tenga `vmax` grande con su `NS3FB-STATE` y ese es el estado
+real del mundo, en la pantalla que sea. `t_ms` (ms desde el arranque) y `at`
+(número de draw global) dicen cuándo se vio por primera vez.
 
 - `cmask` a 0 en el RT0 → el pase dibuja y no escribe nada.
 - `z=0/0/…` o un `func` que rechaza todo → nada llega al color.
@@ -239,6 +254,21 @@ mundo:
 - `w8=0` o `h8=0` → el resolve se descarta por geometría inválida (lo cuenta
   `discarded` en el resumen).
 - `dst_len=0` → no hay copia, solo clear.
+
+**Y los clears, con su valor y su rango:**
+
+```
+NS3FB-CLEAR n=… depth=1 color=0 d_value=0x… c_value=0x…{:08X}
+            d_base=… d_pitch=… d_fmt=… d_span=base+rowlen x rows
+            c_base=… c_pitch=… c_fmt=… c_span=… w8=… h8=…
+```
+
+Una línea por cada clear distinto. `d_value` es **`RB_DEPTH_CLEAR`**, y
+`d_span` / `c_span` el rango exacto de tiles EDRAM que se limpia
+(`GetResolveEdramTileSpan`): base, longitud de fila y número de filas. Es el dato
+que permite responder a «¿la profundidad contra la que testea el mundo está
+limpia a 0 (cerca) o a 1 (lejos)?». Con `zfunc=lessEqual`, limpiarla a 0 hace
+que no pase ni un fragmento y el target sale negro sin un solo error.
 
 **Quinto: los dos experimentos que cierran la pregunta.**
 
@@ -270,7 +300,7 @@ Si `zoff` no sale a 1, el marcador no se aplicó y la prueba no vale.
 
 **Lo que NO dice el log.** No hay forma de saber desde el log si un píxel
 concreto salió negro por el shader: eso requiere capturar un frame en Xcode con
-Mac. Estas cinco preguntas acotan el problema a un subsistema, no lo sustituyen.
+Mac. Estas preguntas acotan el problema a un subsistema, no lo sustituyen.
 
 ## Cómo pedir ayuda
 
