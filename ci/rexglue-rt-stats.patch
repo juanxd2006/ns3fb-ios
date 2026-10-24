@@ -1,32 +1,66 @@
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -3746,6 +3746,87 @@
+@@ -3746,6 +3746,125 @@
    REXLOG_INFO("NS3FB-DRAW next300 indexed={} verts={} prims:{}", indexed, verts, prims);
  }
  
 +// --- NS3FB: reparto de draws por tipo de render pass ----------------------
 +//
-+// Responde a "a que pase van los draws del mundo": agrupa los draws en
-+// ventanas de 300 y las vuelca con el key del pase en el que cae cada uno.
++// Responde a "a que pase van los draws del mundo, y cuantos vertices lleva
++// cada uno". Tabla ACUMULATIVA por clave, volcada cada 1500 draws clasificados:
 +//
-+// Combinado con NS3FB-DRAW (vertices por ventana) se ve si los draws de 66.000
-+// vertices van a un pase con depth y formato 8:8:8:8, o al de
-+// 16_16_16_16_FLOAT sin depth. Los keys se imprimen en DECIMAL; para pasarlos
-+// a hexadecimal: 6=0x6, 14=0xE, 1802=0x70A, 1800=0x708.
++//   Por que acumulativa y no por ventana de 300: en pelea hay del orden de
++//   miles de draws por segundo, asi que una ventana de 300 volcada entera
++//   (cabecera + una linea por clave) inunda el log y en el iPhone se pierden
++//   lineas. Acumulando, el volcado cabe holgadamente y la pregunta "donde
++//   caen los ~66.000 vertices del mundo" se responde en UNA linea.
++//
++//   NS3FB-KEYS    cabecera: total clasificado, tamano de la tabla, claves que
++//                 no cupieron (dropped) y draws que el contador global vio
++//                 pero que nunca llegaron a los render targets (lost_cum) con
++//                 el detalle del ultimo periodo (lost). Si lost_cum != 0 hay
++//                 draws que mueren en IssueDraw antes de tocar el pase.
++//   NS3FB-KEYSK   una linea por clave, con dibujos, vertices e indexados.
++//   NS3FB-RT      una vez por tipo de pase visto, con sus formatos.
++//
++// 16 claves: el log reporta 9 tipos de pase en uso, asi que con 4 (version
++// anterior) los draws de la 5a en adelante se perdian en silencio.
 +//
 +// Todo va como enteros: los campos del key son bit-fields y fmt no los puede
 +// enlazar por referencia; y no se construyen cadenas para no depender de que
 +// fmt::format este disponible en esta unidad.
 +namespace {
 +
-+uint32_t g_ns3fb_win_keys[4] = {};
-+uint64_t g_ns3fb_win_counts[4] = {};
++constexpr size_t kNs3fbKeySlots = 16;
++constexpr uint64_t kNs3fbKeysDumpEvery = 1500;
++uint32_t g_ns3fb_win_keys[kNs3fbKeySlots] = {};
++uint64_t g_ns3fb_win_draws[kNs3fbKeySlots] = {};
++uint64_t g_ns3fb_win_verts[kNs3fbKeySlots] = {};
++uint64_t g_ns3fb_win_indexed[kNs3fbKeySlots] = {};
 +size_t g_ns3fb_win_size = 0;
 +uint64_t g_ns3fb_win_total = 0;
++uint64_t g_ns3fb_win_dropped = 0;
++uint64_t g_ns3fb_keys_last_seen_total = 0;
 +
 +}  // namespace
 +
-+static void Ns3fbNoteRenderPassKey(const VulkanRenderTargetCache::RenderPassKey& key) {
++static void Ns3fbDumpRenderPassKeyTable() {
++  const uint64_t seen_total = g_ns3fb_draw_total.load(std::memory_order_relaxed);
++  const uint64_t lost_cum = seen_total - g_ns3fb_win_total;
++  const uint64_t lost = seen_total - g_ns3fb_keys_last_seen_total - kNs3fbKeysDumpEvery;
++  g_ns3fb_keys_last_seen_total = seen_total;
++
++  REXLOG_INFO("NS3FB-KEYS n={} slots={} dropped={} lost={} lost_cum={}", g_ns3fb_win_total,
++              g_ns3fb_win_size, g_ns3fb_win_dropped, lost, lost_cum);
++  for (size_t i = 0; i < g_ns3fb_win_size; ++i) {
++    const uint32_t key = g_ns3fb_win_keys[i];
++    REXLOG_INFO("NS3FB-KEYSK slot={} key={} hex=0x{:X} draws={} verts={} indexed={}", i, key, key,
++                g_ns3fb_win_draws[i], g_ns3fb_win_verts[i], g_ns3fb_win_indexed[i]);
++  }
++}
++
++static void Ns3fbNoteRenderPassKey(const VulkanRenderTargetCache::RenderPassKey& key,
++                                   uint32_t index_count, bool indexed) {
 +  // Registrar el tipo de pase la primera vez que se ve, con sus formatos.
 +  static uint32_t ns3fb_seen_keys[24];
 +  static size_t ns3fb_seen_count = 0;
@@ -40,8 +74,8 @@
 +  if (!known && ns3fb_seen_count < 24) {
 +    ns3fb_seen_keys[ns3fb_seen_count++] = key.key;
 +    const uint32_t msaa_samples = uint32_t(key.msaa_samples);
-+    const uint32_t depth_used = key.depth_and_color_used & 1u;
-+    const uint32_t color_used = key.depth_and_color_used >> 1;
++    const uint32_t depth_used = uint32_t(key.depth_and_color_used & 1u);
++    const uint32_t color_used = uint32_t(key.depth_and_color_used) >> 1;
 +    const uint32_t depth_format = uint32_t(key.depth_format);
 +    const uint32_t color_0 = uint32_t(key.color_0_view_format);
 +    const uint32_t color_1 = uint32_t(key.color_1_view_format);
@@ -55,45 +89,51 @@
 +        color_3, use_transfer);
 +  }
 +
-+  // Ventana de 300 draws: cuantos caen en cada tipo de pase.
-+  bool slot_found = false;
++  // Tabla acumulativa por clave.
++  size_t slot = g_ns3fb_win_size;
 +  for (size_t i = 0; i < g_ns3fb_win_size; ++i) {
 +    if (g_ns3fb_win_keys[i] == key.key) {
-+      ++g_ns3fb_win_counts[i];
-+      slot_found = true;
++      slot = i;
 +      break;
 +    }
 +  }
-+  if (!slot_found && g_ns3fb_win_size < 4) {
++  if (slot == g_ns3fb_win_size) {
++    if (g_ns3fb_win_size >= kNs3fbKeySlots) {
++      // Mas tipos de pase que huecos: se contabiliza como no clasificado en
++      // lugar de perderlo en silencio (dropped > 0 en la cabecera lo delata).
++      ++g_ns3fb_win_dropped;
++      ++g_ns3fb_win_total;
++      if (g_ns3fb_win_total % kNs3fbKeysDumpEvery == 0) {
++        Ns3fbDumpRenderPassKeyTable();
++      }
++      return;
++    }
 +    g_ns3fb_win_keys[g_ns3fb_win_size] = key.key;
-+    g_ns3fb_win_counts[g_ns3fb_win_size] = 1;
 +    ++g_ns3fb_win_size;
++  }
++  ++g_ns3fb_win_draws[slot];
++  g_ns3fb_win_verts[slot] += index_count;
++  if (indexed) {
++    ++g_ns3fb_win_indexed[slot];
 +  }
 +  ++g_ns3fb_win_total;
 +
-+  if (g_ns3fb_win_total >= 300) {
-+    REXLOG_INFO("NS3FB-KEYS n={} k0={} c0={} k1={} c1={} k2={} c2={} k3={} c3={}",
-+                g_ns3fb_win_total, g_ns3fb_win_keys[0], g_ns3fb_win_counts[0], g_ns3fb_win_keys[1],
-+                g_ns3fb_win_counts[1], g_ns3fb_win_keys[2], g_ns3fb_win_counts[2],
-+                g_ns3fb_win_keys[3], g_ns3fb_win_counts[3]);
-+    g_ns3fb_win_size = 0;
-+    g_ns3fb_win_total = 0;
-+    for (size_t i = 0; i < 4; ++i) {
-+      g_ns3fb_win_keys[i] = 0;
-+      g_ns3fb_win_counts[i] = 0;
-+    }
++  if (g_ns3fb_win_total % kNs3fbKeysDumpEvery == 0) {
++    Ns3fbDumpRenderPassKeyTable();
 +  }
 +}
 +
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                                         IndexBufferInfo* index_buffer_info,
                                         bool major_mode_explicit) {
-@@ -4013,6 +4094,8 @@
-                                     normalized_color_mask, *vertex_shader)) {
+@@ -4014,6 +4133,10 @@
      return draw_fail("render_target_update");
    }
-+  // NS3FB: contabilizar este draw en su tipo de pase.
-+  Ns3fbNoteRenderPassKey(render_target_cache_->last_update_render_pass_key());
  
++  // NS3FB: contabilizar este draw en su tipo de pase, con sus vertices.
++  Ns3fbNoteRenderPassKey(render_target_cache_->last_update_render_pass_key(), index_count,
++                         index_buffer_info != nullptr);
++
    // Create the pipeline (for this, need the render pass from the render target
    // cache), translating the shaders - doing this now to obtain the used
+   // textures.
