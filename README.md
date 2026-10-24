@@ -326,7 +326,7 @@ with a free Apple ID, signing fails if you leave them enabled.
   by the codegen is a derivative work of **your** `default.xex`: do not redistribute it.
 - **Do not open issues asking for or sharing game files.** They are closed without reply.
 - Not publishable on the App Store. Sideload / internal TestFlight only.
-- Code license: [LICENSE](LICENSE) · Third parties: [CREDITS.md](CREDITS.md)
+- Code license: [LICENSE](LICENSE) · Scope of that license: [NOTICE.md](NOTICE.md) · Third parties: [CREDITS.md](CREDITS.md)
 
 ## 🙏 Credits
 
