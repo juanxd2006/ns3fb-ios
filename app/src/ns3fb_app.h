@@ -369,19 +369,6 @@ class Ns3fbApp : public rex::ReXApp {
     // plugin de GPU no estan exportados como simbolo.
     const auto q_i = [](const char* name) { return rex::cvar::Query<int32_t>(name); };
     const auto q_b = [](const char* name) { return rex::cvar::Query<bool>(name) ? 1 : 0; };
-    REXLOG_INFO(
-        "NS3FB-CONFIG msaa={} video={}x{} rt_path={} occl={} gamma16={} snorm16={} "
-        "aniso={} async={} unclipped_cpu={} letterbox={} fsi_mask={} direct_resolve={} "
-        "zoff={} blendoff={}",
-        q_i("msaa_override"), q_i("video_mode_width"), q_i("video_mode_height"),
-        rex::cvar::Query<std::string>("render_target_path_vulkan"), q_b("occlusion_query_enable"),
-        q_b("gamma_render_target_as_unorm16"), q_b("snorm16_render_target_full_range"),
-        q_i("anisotropic_override"), q_b("async_shader_compilation"),
-        q_b("execute_unclipped_draw_vs_on_cpu"), q_b("present_letterbox"),
-        q_b("fsi_sample_mask_from_sample_id"), q_b("direct_host_resolve"),
-        // Los dos overrides de diagnostico: si no son 1, los marcadores no se
-        // aplicaron y el build no sirve para decidir nada.
-        q_b("ztest_off"), q_b("blend_off"));
 
     for (const auto& marker : kCvarMarkers) {
       std::error_code marker_ec;
@@ -396,6 +383,23 @@ class Ns3fbApp : public rex::ReXApp {
                     marker.value);
       }
     }
+
+    // El volcado va DESPUES del bucle de marcadores a proposito: si va antes,
+    // los campos zoff/blendoff (y cualquier cvar que ponga un marcador) salen
+    // con el valor previo y un marcador aplicado se lee como no aplicado.
+    REXLOG_INFO(
+        "NS3FB-CONFIG msaa={} video={}x{} rt_path={} occl={} gamma16={} snorm16={} "
+        "aniso={} async={} unclipped_cpu={} letterbox={} fsi_mask={} direct_resolve={} "
+        "zoff={} blendoff={}",
+        q_i("msaa_override"), q_i("video_mode_width"), q_i("video_mode_height"),
+        rex::cvar::Query<std::string>("render_target_path_vulkan"), q_b("occlusion_query_enable"),
+        q_b("gamma_render_target_as_unorm16"), q_b("snorm16_render_target_full_range"),
+        q_i("anisotropic_override"), q_b("async_shader_compilation"),
+        q_b("execute_unclipped_draw_vs_on_cpu"), q_b("present_letterbox"),
+        q_b("fsi_sample_mask_from_sample_id"), q_b("direct_host_resolve"),
+        // Los dos overrides de diagnostico: si no son 1, los marcadores no se
+        // aplicaron y el build no sirve para decidir nada.
+        q_b("ztest_off"), q_b("blend_off"));
   }
 #endif
 };
