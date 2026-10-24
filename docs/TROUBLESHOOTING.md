@@ -151,6 +151,33 @@ Sube `audio_maxqframes` a 24–32. Baja si la latencia molesta.
 
 ### 9. El 3D sale negro con los menús y el HUD perfectos
 
+> **ESTADO: en curso, con un avance medido.**
+>
+> Síntoma actual: menús, Character Select y **modo Practica** se ven completos
+> (~29 fps). **El modo VS Battle sigue negro.**
+>
+> Lo que sí se estableció con datos: desactivar `direct_host_resolve` hizo
+> aparecer el modo Practica. Ese atajo resuelve del render target del host a
+> memoria del invitado sin volcar antes los render targets a la EDRAM, y en este
+> port hay algo en ese camino que no entrega el contenido (el shader de copia
+> escribiría ceros, y el pase de composición muestrea esa memoria como textura).
+> La app lo deja en `false` porque no cuesta fps.
+>
+> Lo que **no** está establecido: que esa sea la causa del VS Battle. Sigue
+> negro con el atajo desactivado, así que falta una segunda causa o el VS usa
+> otro camino. Siguiente paso: log de Practica y log de VS Battle con el mismo
+> build y comparar `NS3FB-RANGE`, `NS3FB-TEX` y `NS3FB-MEM after=submit`.
+>
+> Descartado con datos a lo largo de la investigación: depth test (con el
+> adjunto eliminado seguía negro), blending, máscara de color, formato del
+> target, el resolve en sí, un rango EDRAM reclamado de más
+> (`rexglue-sdk#513` no aplica: máximo 240 tiles) y el shadow map (27 % de los
+> vértices, pero solo en la fase inicial).
+>
+> El resto de esta sección queda como guía de diagnóstico por si vuelve a
+> aparecer un síntoma parecido.
+
+
 Ese síntoma (mundo negro, UI y partículas bien, audio y lógica correctos, cero
 errores en el log) tiene cuatro causas posibles y el log las separa sin captura
 de GPU. Todo lo que sigue lo escriben los parches de diagnóstico
