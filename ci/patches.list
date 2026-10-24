@@ -54,3 +54,11 @@ rexglue-guest-state.patch
 # que no lleva bias, se ve perfecto. Es el mismo arreglo que ya tiene Xenia
 # Canary; el upstream lo cerro como "not planned" (issue #456).
 rexglue-tfetch-expadjust.patch
+
+# Layout de controles tactiles de fighting game, en vez del "FPS Compact" de
+# XeniOS que venia en el parche del SDK: stick grande abajo-izquierda, rombo de
+# ataque abajo-derecha con el boton principal mas grande, apoyos apilados en el
+# borde derecho, zona de camara acotada (antes cubria el 100% de la pantalla y
+# se comia los gestos) y cuatro huecos de objeto abajo al centro mapeados al
+# D-pad. Solo mueve y redimensiona: no cambia el mapeo del pad del invitado.
+rexglue-touch-storm.patch
