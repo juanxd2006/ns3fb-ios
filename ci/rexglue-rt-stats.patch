@@ -1,6 +1,6 @@
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -3746,6 +3746,37 @@
+@@ -3746,6 +3746,44 @@
    REXLOG_INFO("NS3FB-DRAW next300 indexed={} verts={} prims:{}", indexed, verts, prims);
  }
  
@@ -10,9 +10,10 @@
 +// usa, con cuantos adjuntos y con que MSAA. Responde, sin captura de GPU, a la
 +// pregunta "a que formato va el mundo 3D y con que depth".
 +//
-+// Los formatos son los enums del invitado (xenos::ColorRenderTargetFormat y
-+// xenos::DepthRenderTargetFormat), que es lo que hace falta para cruzarlos con
-+// lo que MoltenVK dice soportar en el log.
++// Los formatos son los enums del invitado, que es lo que hace falta para
++// cruzarlos con lo que MoltenVK dice soportar en el log. Todo va convertido a
++// uint32_t: los campos del key son bit-fields y fmt no los puede enlazar por
++// referencia.
 +static void Ns3fbLogRenderPassKey(const VulkanRenderTargetCache::RenderPassKey& key) {
 +  static uint32_t ns3fb_seen_keys[24];
 +  static size_t ns3fb_seen_count = 0;
@@ -25,20 +26,26 @@
 +    return;
 +  }
 +  ns3fb_seen_keys[ns3fb_seen_count++] = key.key;
++  const uint32_t msaa_samples = uint32_t(key.msaa_samples);
++  const uint32_t depth_used = key.depth_and_color_used & 1u;
++  const uint32_t color_used = key.depth_and_color_used >> 1;
++  const uint32_t depth_format = uint32_t(key.depth_format);
++  const uint32_t color_0 = uint32_t(key.color_0_view_format);
++  const uint32_t color_1 = uint32_t(key.color_1_view_format);
++  const uint32_t color_2 = uint32_t(key.color_2_view_format);
++  const uint32_t color_3 = uint32_t(key.color_3_view_format);
++  const uint32_t use_transfer = uint32_t(key.color_rts_use_transfer_formats);
 +  REXLOG_INFO(
 +      "NS3FB-RT key=0x{:08X} msaa={} depth_used={} color_used=0x{:X} depth_fmt={} "
 +      "color_fmt={},{},{},{} xfer={}",
-+      key.key, uint32_t(key.msaa_samples), key.depth_and_color_used & 1u,
-+      key.depth_and_color_used >> 1, uint32_t(key.depth_format),
-+      uint32_t(key.color_0_view_format), uint32_t(key.color_1_view_format),
-+      uint32_t(key.color_2_view_format), uint32_t(key.color_3_view_format),
-+      key.color_rts_use_transfer_formats);
++      key.key, msaa_samples, depth_used, color_used, depth_format, color_0, color_1, color_2,
++      color_3, use_transfer);
 +}
 +
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                                         IndexBufferInfo* index_buffer_info,
                                         bool major_mode_explicit) {
-@@ -4013,6 +4044,8 @@
+@@ -4013,6 +4051,8 @@
                                      normalized_color_mask, *vertex_shader)) {
      return draw_fail("render_target_update");
    }
@@ -49,25 +56,30 @@
    // cache), translating the shaders - doing this now to obtain the used
 --- a/src/graphics/vulkan/render_target_cache.cpp
 +++ b/src/graphics/vulkan/render_target_cache.cpp
-@@ -1302,6 +1302,24 @@
+@@ -1302,6 +1302,29 @@
    bool cleared = false;
    bool clear_depth = resolve_info.IsClearingDepth();
    bool clear_color = resolve_info.IsClearingColor();
 +  // NS3FB: quien limpia que, con que formato y con que valor.
 +  //
-+  // Un depth clear a 0.0 con test "less" hace que todo falle el depth test y
-+  // el mundo desaparezca; un depth clear ausente deja basura del frame anterior
-+  // con el mismo efecto. Esto lo distingue sin captura de GPU.
++  // Un depth clear a 0.0 con test "less" hace que todo falle el depth test y el
++  // mundo desaparezca; un clear ausente deja basura del frame anterior con el
++  // mismo efecto. Con esto se distingue sin captura de GPU.
++  //
++  // Los formatos son bit-fields dentro de la union ResolveEdramInfo: se sacan a
++  // uint32_t porque fmt no puede enlazar un bit-field por referencia.
 +  if (clear_depth || clear_color) {
 +    static int ns3fb_clear_logs = 0;
 +    if (ns3fb_clear_logs < 40) {
++      const uint32_t depth_format = uint32_t(resolve_info.depth_edram_info.format);
++      const uint32_t depth_64bpp = uint32_t(resolve_info.depth_edram_info.format_is_64bpp);
++      const uint32_t color_format = uint32_t(resolve_info.color_edram_info.format);
++      const uint32_t color_64bpp = uint32_t(resolve_info.color_edram_info.format_is_64bpp);
 +      REXLOG_INFO(
 +          "NS3FB-CLEAR depth={} depth_val=0x{:08X} depth_fmt={} depth_64bpp={} "
 +          "color={} color_val=0x{:08X} color_fmt={} color_64bpp={}",
-+          clear_depth ? 1 : 0, resolve_info.rb_depth_clear,
-+          resolve_info.depth_edram_info.format, resolve_info.depth_edram_info.format_is_64bpp,
-+          clear_color ? 1 : 0, resolve_info.rb_color_clear,
-+          resolve_info.color_edram_info.format, resolve_info.color_edram_info.format_is_64bpp);
++          clear_depth ? 1 : 0, resolve_info.rb_depth_clear, depth_format, depth_64bpp,
++          clear_color ? 1 : 0, resolve_info.rb_color_clear, color_format, color_64bpp);
 +      ++ns3fb_clear_logs;
 +    }
 +  }
