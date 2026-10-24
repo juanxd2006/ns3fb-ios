@@ -68,3 +68,17 @@
 0x82575F78
 0x825A7898
 0x825EBAC8
+
+# --- 2026-10-24 00:28-00:30: duelo en VS Battle ------------------------------
+# Sesion de juego real (ya con el 3D arreglado). Sintomas reportados:
+#   1) el jutsu definitivo no se ejecuta,
+#   2) al terminar el combate la pantalla de resultados no avanza: la pose de
+#      victoria se queda ahi y el motor sigue a 30 fps (la logica espera algo
+#      que nunca ocurre).
+# Estas 5 funciones se llamaron desde el invitado y se ejecutaron como no-op
+# (NS3FB-TRAP), en ese orden temporal:
+0x825A7308
+0x825A7A18
+0x825A7678
+0x825A76C8
+0x82261CB8
