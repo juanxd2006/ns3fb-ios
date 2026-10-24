@@ -21,6 +21,37 @@ BUILD="$APP/out/build/ios-arm64-release"
   exit 1
 }
 
+# --- Icono de la app --------------------------------------------------------
+# El maestro vive en el repo como base64 porque la API que usa este proyecto
+# solo acepta texto. Aqui se decodifica y se generan con sips los tamanos que
+# pide CFBundleIcons; CMake los recoge del directorio icons/ al configurar.
+ICONS="$APP/platform/ios/icons"
+ICON_B64="$ICONS/ns3fb-icon-256.png.b64"
+if [ -f "$ICON_B64" ]; then
+  MASTER="$ICONS/.master.png.bin"
+  tr -d '\n' < "$ICON_B64" | base64 --decode > "$MASTER" 2>/dev/null \
+    || tr -d '\n' < "$ICON_B64" | base64 -D > "$MASTER"
+  rm -f "$ICONS"/AppIcon*.png
+  if command -v sips >/dev/null 2>&1; then
+    make_icon() { sips -z "$1" "$1" "$MASTER" --out "$ICONS/$2" >/dev/null 2>&1; }
+    make_icon 29  AppIcon29x29.png
+    make_icon 58  AppIcon29x29@2x.png
+    make_icon 87  AppIcon29x29@3x.png
+    make_icon 40  AppIcon40x40.png
+    make_icon 80  AppIcon40x40@2x.png
+    make_icon 120 AppIcon40x40@3x.png
+    make_icon 60  AppIcon60x60.png
+    make_icon 120 AppIcon60x60@2x.png
+    make_icon 180 AppIcon60x60@3x.png
+    make_icon 76  AppIcon76x76.png
+    make_icon 152 AppIcon76x76@2x.png
+    make_icon 167 AppIcon83.5x83.5@2x.png
+    echo "==> Iconos generados: $(ls -1 "$ICONS"/AppIcon*.png | wc -l | tr -d ' ')"
+  else
+    echo "==> aviso: sips no disponible; la app saldra con el icono por defecto" >&2
+  fi
+fi
+
 echo "==> Configuring (iOS arm64, CMake $("cmake" --version | head -1 | awk '{print $3}'))"
 cmake -S "$APP" -B "$BUILD" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
