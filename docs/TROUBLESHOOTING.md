@@ -298,6 +298,46 @@ NS3FB: ztest_off=1 (z test forzado a OFF en todos los draws)
 
 Si `zoff` no sale a 1, el marcador no se aplicó y la prueba no vale.
 
+**Sexto: los píxeles, sin captura de GPU.**
+
+El resolve deja la imagen en memoria del invitado, y esa memoria se puede leer
+desde la CPU. `NS3FB-MEM` escanea (muestreando) el rango que resolvió la llamada
+anterior y lo resume:
+
+```
+NS3FB-MEM n=… c_base=… d_base=… w8=… h8=… start=0x… len=0x… px=… nz=… pct=…
+          min=… max=… mean=… s0=0x… s1=0x… s2=0x… s3=0x…
+```
+
+- **`nz=0`** → ese target está negro en memoria. El fallo está en el rasterizado
+  o en el pixel shader; nada que muestree esa memoria lo puede arreglar.
+- **`nz>0`** → hay color y el fallo está en quien lo lee después (el pase de
+  composición o el caché de texturas).
+
+**Séptimo: quién reclama qué EDRAM.**
+
+`NS3FB-RANGE` y `NS3FB-RANGERT` registran, por cada combinación distinta de
+targets, cuántos tiles reclama cada uno antes de cambiar la propiedad:
+
+```
+NS3FB-RANGE   sig=0x… pitch=… msaa=… height=… rts=… sum=…
+NS3FB-RANGERT sig=0x… slot=0 kind=depth base=480 len=240 end=720
+```
+
+**`sum` es el número que importa.** Con `sum` cerca de 2048 (`kEdramTileCount`)
+y un solo target, ese pase está reclamando la EDRAM entera: si es un mapa de
+sombras con pitch pequeño (13 tiles = 1040 px) desde la base 0, se lleva por
+delante el color de la escena que vive ahí mismo, y el resolve posterior
+devuelve negro mientras el HUD, dibujado después, sigue viéndose. Es el modo de
+fallo descrito en `rexglue/rexglue-sdk#513` (Tekken 6), y ahí el arreglo fue
+`execute_unclipped_draw_vs_on_cpu` — que este port ya activa por defecto.
+
+`NS3FB-TEX` / `NS3FB-TEXSLOT` completan el cuadro con las texturas que ata cada
+pase: tipo, formato, si están en tiles, dirección base y tamaño. El `base` de un
+`TEXSLOT` se cruza con el `dst_base` de los `RES`: si el pase que compone
+muestrea una dirección que nunca fue destino de un resolve, está leyendo memoria
+vieja.
+
 **Lo que NO dice el log.** No hay forma de saber desde el log si un píxel
 concreto salió negro por el shader: eso requiere capturar un frame en Xcode con
 Mac. Estas preguntas acotan el problema a un subsistema, no lo sustituyen.
