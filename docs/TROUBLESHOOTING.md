@@ -373,6 +373,44 @@ pase: tipo, formato, si están en tiles, dirección base y tamaño. El `base` de
 muestrea una dirección que nunca fue destino de un resolve, está leyendo memoria
 vieja.
 
+### 9b. Rendimiento: dónde se va el frame (medido en iPhone 11 / A13)
+
+Medido con el Metal HUD, perfil `fbo`, mismo build (commit con el arreglo de
+`exp_adjust`), escena de título:
+
+| Resolución | GPU | Compute | Fragment | Blit | Vertex | FPS |
+|---|---|---|---|---|---|---|
+| 1280x720 | 54,25 ms | 28,02 (52 %) | 18,8 | 4,8 | 2,8 | 18,4 |
+| 960x540 | 22,9 ms | ~17 | ~13 | ~3 | ~3 | 30 |
+
+Conclusiones que ya están comprobadas, para no repetirlas:
+
+- **El MSAA no es el coste.** Con `msaa_override = 1` el compute bajó de 28,05 a
+  26,39 ms (no a una cuarta parte) y la imagen salió corrupta (cianes): el layout
+  de la EDRAM emulada está atado al muestreo que pide el invitado. Se queda en 0.
+- **`direct_host_resolve` no acelera nada en esta versión del SDK.**
+  `VulkanRenderTargetCache::TryResolveCopyDirectly` valida pipelines, incrementa
+  `direct_ok` y termina con `return DumpRenderTargets(...)`: el volcado se hace
+  igual. El comentario del código lo dice: *"keep using the existing dump path
+  until source-image direct shaders land"*. El mismo stub está en el backend
+  D3D12. Por eso `NS3FB-RES-SUM.direct_ok` sube aunque el coste no cambie.
+- **El compute son los volcados de EDRAM**, no el resolve de MSAA: el juego
+  cierra ~30 pases por frame y cada resolve arrastra varios dispatches (el HUD
+  marca ~108 *compute encoders* por frame). Su coste va con los píxeles, de ahí
+  que 720p (2,25x los píxeles de 480p) sea 2,4x más caro que 540p.
+- Por eso 720p con este backend no llega a 30 fps en un A13: no falta una cvar,
+  falta el resolve directo.
+
+Palancas que sí se pueden usar sin recompilar:
+
+| Ajuste | Efecto |
+|---|---|
+| `video_mode_width/height = 960x540` | 30 fps; el coste cae más que proporcionalmente |
+| `present_effect = "cas"` | recupera nitidez al reescalar, sin coste apreciable |
+| `execute_unclipped_draw_vs_on_cpu_with_scissor = true` | gasta CPU (ociosa) para que el volcado cubra menos tiles |
+| `mvk_async_submit.txt` / `MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0` | quita el bloqueo de la cola en cada submit |
+| `msaa_override = 2` | solo si se acepta el riesgo de corrupción; 1x ya se descartó |
+
 **Lo que NO dice el log.** No hay forma de saber desde el log si un píxel
 concreto salió negro por el shader: eso requiere capturar un frame en Xcode con
 Mac. Estas preguntas acotan el problema a un subsistema, no lo sustituyen.
