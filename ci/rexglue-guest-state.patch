@@ -1,47 +1,60 @@
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -3865,6 +3865,112 @@
+@@ -3865,6 +3865,173 @@
    }
  }
  
 +// --- NS3FB: estado del invitado que puede dejar el 3D en negro -------------
 +//
-+// Una linea por tipo de pase (no por draw), en el mismo punto que NS3FB-KEYSK,
-+// con todo lo que puede producir "se dibuja pero no se ve" sin un solo error:
++// Una linea por tipo de pase y CADA VEZ QUE EL ESTADO CAMBIA (rev=1, 2, 3...),
++// no solo la primera vez que se ve el pase.
++//
++// Por que las revisiones: la clave de pase solo codifica formatos y adjuntos, NO
++// incluye zfunc, z_write, la mascara de color ni el blend, y el mismo pase cambia
++// de estado entre pantallas. Con un unico volcado por clave se estaba juzgando la
++// seleccion de personaje con el estado de la intro: en este proyecto paso
++// exactamente eso.
++//
++// campos, y que descarta cada uno:
 +//
 +//   cmask   mascara de escritura de color (RB_COLOR_MASK). Si los 4 bits del
 +//           RT0 estan a 0, el pase dibuja y no escribe NADA.
-+//   bl      RB_BLENDCONTROL del RT0: factores y operacion. Una combinacion
-+//           tipo zero/one puede anular el color.
-+//   z       z_enable / z_write / zfunc: un zfunc que rechaza todo deja el
-+//           pase intacto (no escribe color por el early-z).
-+//   clip    clip_disable y dx_clip_space_def: con clip_disable=1 y geometria
-+//           fuera de rango, nada se rasteriza.
-+//   cull    cull_front/cull_back/face: con el sentido de winding invertido se
-+//           descarta toda la malla.
-+//   vp      viewport con signo (xscale/offset en x16 para no depender de fmt
-+//           con floats): un viewport de 1x1 o desplazado saca el mundo de
-+//           pantalla.
++//   bl      RB_BLENDCONTROL del RT0: factores y operacion.
++//   z       z_enable / z_write / zfunc: un zfunc que rechaza todo deja el pase
++//           intacto sin escribir color.
++//   clip    clip_disable y dx_clip_space_def: con clip_disable y geometria fuera
++//           de rango no se rasteriza nada.
++//   cull    cull_front/cull_back/face: con el winding invertido se descarta la
++//           malla entera.
++//   vp      viewport con signo, en punto fijo x16 (no se depende de fmt con
++//           floats).
 +//   sci     scissor TL/BR: un scissor vacio recorta todo.
 +//
-+// Y NS3FB-TGT con las direcciones EDRAM del pase, para poder cruzarlas con el
-+// destino de cada resolve (NS3FB-RES): si el mundo escribe en un rango EDRAM
-+// que nunca se resuelve a memoria del invitado, el resultado es negro aunque
-+// el dibujo sea correcto.
++// Y NS3FB-TGT con las direcciones EDRAM del pase, para cruzarlas con el destino
++// de cada resolve (NS3FB-RES): si el mundo escribe en un rango EDRAM que nunca
++// se resuelve, el resultado es negro aunque el dibujo sea correcto.
++namespace {
++
++constexpr size_t kNs3fbStateSlots = 32;
++// Tope de revisiones por clave: un pase que cambia de estado en cada frame
++// llenaria el log y taparia el cambio que importa. Pasado el tope se siguen
++// contando en sup= para dejar constancia de que hubo mas cambios sin volcarlos.
++constexpr uint32_t kNs3fbStateRevsPerKey = 6;
++
++struct Ns3fbPassStateSlot {
++  uint32_t key;
++  uint32_t signature;
++  uint32_t revs;
++  uint32_t suppressed;
++};
++
++Ns3fbPassStateSlot g_ns3fb_state_slots[kNs3fbStateSlots] = {};
++size_t g_ns3fb_state_slot_count = 0;
++
++}  // namespace
++
 +static void Ns3fbLogGuestStateForPassKey(const VulkanRenderTargetCache::RenderPassKey& key,
 +                                         const RegisterFile& regs) {
-+  static uint32_t ns3fb_state_seen[32];
-+  static size_t ns3fb_state_seen_count = 0;
-+  for (size_t i = 0; i < ns3fb_state_seen_count; ++i) {
-+    if (ns3fb_state_seen[i] == key.key) {
-+      return;  // Ya descrito: una linea por tipo de pase y sesion.
-+    }
-+  }
-+  if (ns3fb_state_seen_count >= 32) {
-+    return;
-+  }
-+  ns3fb_state_seen[ns3fb_state_seen_count++] = key.key;
-+
 +  const auto color_mask = regs.Get<reg::RB_COLOR_MASK>();
 +  const auto blend_0 = regs.Get<reg::RB_BLENDCONTROL>(reg::RB_BLENDCONTROL::rt_register_indices[0]);
 +  const auto depth_control = regs.Get<reg::RB_DEPTHCONTROL>();
@@ -49,8 +62,13 @@
 +  const auto sc_mode = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
 +  const auto scissor_tl = regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>();
 +  const auto scissor_br = regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
++  const auto surface_info = regs.Get<reg::RB_SURFACE_INFO>();
++  const auto color_0_info = regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[0]);
++  const auto color_1_info = regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[1]);
++  const auto depth_info = regs.Get<reg::RB_DEPTH_INFO>();
 +
-+  // Mascara de color de los 4 RT como un solo entero de 16 bits.
++  // Todo a enteros: los campos de los registros son bit-fields y fmt no los
++  // puede enlazar por referencia.
 +  const uint32_t color_mask_u32 = uint32_t(color_mask.value) & 0xFFFFu;
 +  const uint32_t blend_src = uint32_t(blend_0.color_srcblend);
 +  const uint32_t blend_op = uint32_t(blend_0.color_comb_fcn);
@@ -64,61 +82,105 @@
 +  const uint32_t cull_back = uint32_t(sc_mode.cull_back);
 +  const uint32_t face = uint32_t(sc_mode.face);
 +
-+  // Viewport en punto fijo x16: REXLOG_INFO no recibe floats aqui y el valor
-+  // con 1/16 de pixel es mas que suficiente para ver un viewport roto.
-+  const float vport_xscale = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE);
-+  const float vport_xoffset = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XOFFSET);
-+  const float vport_yscale = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE);
-+  const float vport_yoffset = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YOFFSET);
-+  const int32_t vp_xs = int32_t(vport_xscale * 16.0f);
-+  const int32_t vp_xo = int32_t(vport_xoffset * 16.0f);
-+  const int32_t vp_ys = int32_t(vport_yscale * 16.0f);
-+  const int32_t vp_yo = int32_t(vport_yoffset * 16.0f);
++  // Viewport en punto fijo x16: con 1/16 de pixel basta para ver un viewport
++  // roto y evita depender del formato de floats en esta unidad.
++  const int32_t vp_xs = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE) * 16.0f);
++  const int32_t vp_xo = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XOFFSET) * 16.0f);
++  const int32_t vp_ys = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE) * 16.0f);
++  const int32_t vp_yo = int32_t(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YOFFSET) * 16.0f);
 +
 +  const uint32_t sc_tl_x = uint32_t(scissor_tl.tl_x);
 +  const uint32_t sc_tl_y = uint32_t(scissor_tl.tl_y);
 +  const uint32_t sc_br_x = uint32_t(scissor_br.br_x);
 +  const uint32_t sc_br_y = uint32_t(scissor_br.br_y);
 +
-+  REXLOG_INFO(
-+      "NS3FB-STATE key=0x{:08X} cmask=0x{:04X} bl={}/{}/{} z={}/{}/{} clip_dis={} dxclip={} "
-+      "cull_f={} cull_b={} face={} vp={},{},{},{} sci={},{} {},{}",
-+      key.key, color_mask_u32, blend_src, blend_op, blend_dst, z_enable, z_write, zfunc,
-+      clip_disable, dx_clip, cull_front, cull_back, face, vp_xs, vp_xo, vp_ys, vp_yo, sc_tl_x,
-+      sc_tl_y, sc_br_x, sc_br_y);
-+
-+  // Direcciones EDRAM del pase: color_base esta partido en 11 + 1 bits.
-+  const auto surface_info = regs.Get<reg::RB_SURFACE_INFO>();
-+  const auto color_0_info = regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[0]);
-+  const auto color_1_info = regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[1]);
-+  const auto depth_info = regs.Get<reg::RB_DEPTH_INFO>();
++  // Bases EDRAM: color_base esta partido en 11 + 1 bits.
 +  const uint32_t color_0_base =
 +      uint32_t(color_0_info.color_base) | (uint32_t(color_0_info.color_base_bit_11) << 11);
 +  const uint32_t color_1_base =
 +      uint32_t(color_1_info.color_base) | (uint32_t(color_1_info.color_base_bit_11) << 11);
-+  const uint32_t depth_base = uint32_t(depth_info.depth_base) |
-+                              (uint32_t(depth_info.depth_base_bit_11) << 11);
++  const uint32_t depth_base =
++      uint32_t(depth_info.depth_base) | (uint32_t(depth_info.depth_base_bit_11) << 11);
 +  const uint32_t color_0_format = uint32_t(color_0_info.color_format);
 +  const uint32_t color_1_format = uint32_t(color_1_info.color_format);
 +  const uint32_t depth_format = uint32_t(depth_info.depth_format);
 +  const uint32_t surface_pitch = uint32_t(surface_info.surface_pitch);
 +  const uint32_t msaa_samples_field = uint32_t(surface_info.msaa_samples);
 +
-+  REXLOG_INFO("NS3FB-TGT key=0x{:08X} c0_base={} c0_fmt={} c1_base={} c1_fmt={} d_base={} d_fmt={} "
-+              "pitch={} msaa={}",
-+              key.key, color_0_base, color_0_format, color_1_base, color_1_format, depth_base,
++  // Firma del estado: si no cambia, no se imprime nada.
++  uint32_t signature = key.key;
++  signature = signature * 16777619u ^ color_mask_u32;
++  signature = signature * 16777619u ^ (blend_src | (blend_op << 8) | (blend_dst << 16));
++  signature = signature * 16777619u ^ (z_enable | (z_write << 1) | (zfunc << 2));
++  signature = signature * 16777619u ^
++              (clip_disable | (dx_clip << 1) | (cull_front << 2) | (cull_back << 3) | (face << 4));
++  signature = signature * 16777619u ^ uint32_t(vp_xs) ^ (uint32_t(vp_xo) << 13) ^
++              (uint32_t(vp_ys) << 7) ^ (uint32_t(vp_yo) << 21);
++  signature = signature * 16777619u ^
++              (sc_tl_x | (sc_tl_y << 14) | (sc_br_x << 5) | (sc_br_y << 19));
++  signature = signature * 16777619u ^
++              (color_0_base | (color_0_format << 12) | (color_1_base << 16) | (color_1_format << 28));
++  signature = signature * 16777619u ^ (depth_base | (depth_format << 12) | (surface_pitch << 16) |
++                                       (msaa_samples_field << 27));
++
++  Ns3fbPassStateSlot* slot = nullptr;
++  for (size_t i = 0; i < g_ns3fb_state_slot_count; ++i) {
++    if (g_ns3fb_state_slots[i].key == key.key) {
++      slot = &g_ns3fb_state_slots[i];
++      break;
++    }
++  }
++  if (!slot) {
++    if (g_ns3fb_state_slot_count >= kNs3fbStateSlots) {
++      return;  // Mas claves que huecos: no se inventan revisiones.
++    }
++    slot = &g_ns3fb_state_slots[g_ns3fb_state_slot_count++];
++    slot->key = key.key;
++    slot->signature = signature;
++    slot->revs = 0;
++    slot->suppressed = 0;
++  } else if (slot->signature == signature) {
++    return;  // Sin cambios respecto a la ultima revision: no se escribe nada.
++  } else if (slot->revs >= kNs3fbStateRevsPerKey) {
++    // Tope alcanzado: el estado sigue cambiando y ya no se vuelca. Se avisa UNA
++    // vez, porque si no la ultima revision impresa parece la definitiva cuando
++    // ya no lo es.
++    if (slot->suppressed == 0) {
++      REXLOG_INFO(
++          "NS3FB-STATE key=0x{:08X} rev={} sup=1 (tope de revisiones: el estado sigue cambiando y "
++          "ya no se vuelca)",
++          key.key, slot->revs);
++    }
++    ++slot->suppressed;
++    return;
++  }
++  slot->signature = signature;
++  ++slot->revs;
++  const uint32_t rev = slot->revs;
++  const uint32_t suppressed = slot->suppressed;
++  // Con sup>0 el estado ya no es el que describe esta linea: el log lo avisa.
++  REXLOG_INFO(
++      "NS3FB-STATE key=0x{:08X} rev={} sup={} cmask=0x{:04X} bl={}/{}/{} z={}/{}/{} "
++      "clip_dis={} dxclip={} cull_f={} cull_b={} face={} vp={},{},{},{} sci={},{} {},{}",
++      key.key, rev, suppressed, color_mask_u32, blend_src, blend_op, blend_dst, z_enable, z_write,
++      zfunc, clip_disable, dx_clip, cull_front, cull_back, face, vp_xs, vp_xo, vp_ys, vp_yo, sc_tl_x,
++      sc_tl_y, sc_br_x, sc_br_y);
++  REXLOG_INFO("NS3FB-TGT key=0x{:08X} rev={} c0_base={} c0_fmt={} c1_base={} c1_fmt={} d_base={} "
++              "d_fmt={} pitch={} msaa={}",
++              key.key, rev, color_0_base, color_0_format, color_1_base, color_1_format, depth_base,
 +              depth_format, surface_pitch, msaa_samples_field);
 +}
 +
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                                         IndexBufferInfo* index_buffer_info,
                                         bool major_mode_explicit) {
-@@ -4137,6 +4243,10 @@
+@@ -4137,6 +4304,11 @@
    Ns3fbNoteRenderPassKey(render_target_cache_->last_update_render_pass_key(), index_count,
                           index_buffer_info != nullptr);
  
-+  // NS3FB: primera vez que se ve este pase, volcar el estado que puede
-+  // dejarlo en negro y sus direcciones EDRAM (una linea por tipo de pase).
++  // NS3FB: estado y direcciones EDRAM del pase. Se vuelca la primera vez y
++  // cada vez que el estado cambia (rev=2, rev=3...), porque la clave de pase no
++  // codifica zfunc, z_write, mascara de color ni blend.
 +  Ns3fbLogGuestStateForPassKey(render_target_cache_->last_update_render_pass_key(), regs);
 +
    // Create the pipeline (for this, need the render pass from the render target
@@ -126,7 +188,7 @@
    // textures.
 --- a/src/graphics/vulkan/render_target_cache.cpp
 +++ b/src/graphics/vulkan/render_target_cache.cpp
-@@ -1140,6 +1140,78 @@
+@@ -1140,6 +1140,79 @@
      return false;
    }
  
@@ -141,9 +203,10 @@
 +  //
 +  //   w8/h8 = 0     el resolve se descarta por geometria invalida: ese pase
 +  //                 nunca llega a memoria, salga lo que salga del rasterizador.
-+  //                 Se ve en la linea con w8=0.
 +  //   c_base        tile EDRAM de origen; se cruza con NS3FB-TGT del pase.
 +  //   dst_len = 0   no hay copia (solo clear): el contenido no se escribe.
++  //   cc            RB_COPY_CONTROL: copy_src_select 0/1/2/3 = color0..3,
++  //                 4 = profundidad; copy_command 0 = kRaw, 1 = kConvert.
 +  //
 +  // Ademas, cada 1200 resolves se resume: NS3FB-RES-SUM con el total, cuantas
 +  // firmas distintas hay y cuantos resolves se descartaron por geometria.
