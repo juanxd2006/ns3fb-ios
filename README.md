@@ -1,312 +1,337 @@
-# NS3FB iOS — Port nativo de *Naruto Shippuden: Ultimate Ninja Storm 3 Full Burst* para iPhone
+<div align="center">
 
-Recompilación estática (PowerPC → ARM64) de la versión **Xbox 360 NTSC-U** corriendo
-nativamente en iOS, con gráficos por **Vulkan sobre Metal (MoltenVK)**.
+<img src="assets/banner.svg" alt="NS3FB iOS — port nativo de Xbox 360 a iPhone" width="100%">
 
-> **Este repositorio NO contiene archivos del juego.** Necesitas tu propio disco y
-> tu propio `default.xex`. Nada del contenido de Bandai Namco / CyberConnect2 se
-> distribuye aquí.
+<br>
+
+**Naruto Shippuden: Ultimate Ninja Storm 3 Full Burst** corriendo nativo en iPhone.
+
+Recompilación estática PowerPC → ARM64 · Vulkan sobre Metal · ~30 fps
+
+<br>
+
+[![iOS](https://img.shields.io/badge/iOS-16.3%2B-000000?logo=apple&logoColor=white)](#-requisitos-mínimos)
+[![Device](https://img.shields.io/badge/arm64-iPhone-555555)](#-requisitos-mínimos)
+[![Engine](https://img.shields.io/badge/ReXGlue-static%20recomp-7c3aed)](https://github.com/rexglue/rexglue-sdk)
+[![Graphics](https://img.shields.io/badge/Vulkan-MoltenVK-e11d48)](https://github.com/KhronosGroup/MoltenVK)
+[![Status](https://img.shields.io/badge/estado-jugable-22c55e)](#-estado)
+[![License](https://img.shields.io/badge/license-MIT-3b82f6)](LICENSE)
+
+[Estado](#-estado) · [Requisitos](#-requisitos-mínimos) · [Qué aportas tú](#-lo-que-tienes-que-aportar-tú) · [Compilar](#-compilar) · [Rendimiento](#-rendimiento) · [Depurar](#-depurar)
+
+</div>
 
 ---
 
-## ⚠️ Lee esto antes de empezar
+> [!IMPORTANT]
+> **Este repositorio no contiene nada del juego.** Ni el ejecutable, ni datos, ni audio,
+> ni vídeos, ni texturas. Solo el toolchain que convierte **tu** copia en una app de iOS.
+> El `default.xex` lo aportas tú, desde tu propio disco, y no se sube nunca al repo.
 
-Esto **no es un port terminado**. Es el esqueleto de proyecto listo para arrancar,
-basado en la infraestructura que ya funciona en
-[MCX360-EDITION](https://github.com/DevZer0D4Y/MCX360-EDITION) (Minecraft Xbox 360
-en iPhone). Lo que viene hecho y lo que falta:
+> [!WARNING]
+> Proyecto de fans, sin ánimo de lucro, sin relación con Bandai Namco, CyberConnect2,
+> VIZ Media ni Microsoft. **No es publicable en la App Store.** Solo sideload.
+
+---
+
+## 📱 Requisitos mínimos
+
+| | Mínimo | Recomendado |
+|---|---|---|
+| **Dispositivo** | iPhone arm64 con iOS 16.3 (desde iPhone XS/XR) | iPhone 12 o posterior |
+| **iOS** | 16.3 | 17 o posterior |
+| **RAM** | 4 GB — verificado en iPhone 11 | 6 GB o más |
+| **Almacenamiento libre** | 10 GB | 15 GB (7 GB son datos del juego) |
+| **Firma** | Apple ID gratis (caduca a los 7 días) | SideStore / AltStore / certificado |
+| **Extras** | Tu `default.xex` NTSC-U | Mando Bluetooth |
+
+> [!NOTE]
+> **Probado en iPhone 11 (A13).** El resto es extrapolación honesta, no una garantía.
+> En dispositivos de 3 GB puede faltar espacio de direcciones si el perfil de firma no
+> incluye `extended-virtual-addressing` — no está probado con este juego.
+
+**Firma:** el `.ipa` sale sin firmar. Con Apple ID gratuito necesitas re-firmar cada
+7 días; con SideStore/AltStore la renovación es automática.
+
+---
+
+## ✅ Estado
+
+Jugable de principio a fin en iPhone 11, a ~30 fps estables (960×540, GPU ~27 ms/frame).
 
 | Parte | Estado |
 |---|---|
-| Capa iOS del SDK ReXGlue (fibers arm64, memoria, threading, touch, Metal) | ✅ Ya existe — es el parche de MCX360 |
-| Traducción PowerPC → C++ del `default.xex` | ✅ Automática (codegen de ReXGlue) |
-| Build iOS (CMake + Xcode), empaquetado `.ipa`, sideload | ✅ Plantillas en este repo |
-| Config del juego (entrypoint, setjmp/longjmp, función de arranque) | ⚠️ Hay que ajustarlo |
-| Cobertura de shaders Xenos del Storm 3 | ⚠️ Hay que probarla |
-| Parches HLE del kernel que el juego necesite | ⚠️ Se descubren ejecutando |
-| Rendimiento / memoria en iPhone | ❌ Desconocido hasta probar |
-
-**Requisitos reales:** un Mac con Xcode (no hay forma de compilar/firmar iOS sin
-Apple), tu disco de Storm 3, y paciencia. Minecraft 360 es un juego ligero; Storm 3
-mueve muchísimos más draw calls y EDRAM, así que el rendimiento es la incógnita
-grande. Puede que no llegue a 30 FPS jugables. No hay garantía.
+| Arranque, menús, selección de personaje y escenario | ✅ |
+| VS Battle, práctica, HUD, partículas, audio | ✅ |
+| Jutsus definitivos, awakening ("modo bestia"), fin de combate | ✅ |
+| Pantalla de resultados y de Ryos | ✅ |
+| Modo historia | ✅ |
+| Controles táctiles + mando Bluetooth (Xbox/PlayStation/MFi) | ✅ |
+| Game Mode, icono propio | ✅ |
+| 1280×720 | ❌ ~18 fps — techo del SDK, ver [Rendimiento](#-rendimiento) |
+| Detalles visuales menores | ⚠️ sin catalogar |
 
 ---
 
-## Estructura
+## 📦 Lo que tienes que aportar tú
 
-```
-ns3fb-ios/
-├── app/
-│   ├── CMakeLists.txt          # target iOS, embebe dylibs del SDK
-│   ├── CMakePresets.json       # preset ios-arm64-release (requiere macOS)
-│   ├── game/                   # ← TUS archivos del juego van aquí (vacío)
-│   ├── generated/              # ← lo crea el codegen (no se versiona)
-│   ├── platform/ios/           # Info.plist + entitlements
-│   └── src/
-│       ├── main.cpp            # REX_DEFINE_APP + parches de funciones
-│       └── ns3fb_app.h         # hooks iOS: rutas, cvars, touch
-├── scripts/
-│   ├── 00-fetch-sdk.sh         # clona rexglue-sdk y aplica el parche iOS
-│   ├── 01-codegen.sh           # recompila TU default.xex a C++
-│   ├── make-ipa.sh             # empaqueta el .ipa para sideload
-│   └── sign-and-install.sh     # firma con tu certificado e instala
-└── docs/
-    └── TROUBLESHOOTING.md
-├── ci/game/                    # ← default.xex para el build en la nube
-└── .github/workflows/          # build automático en macOS runner
-```
+| Qué | Detalle | ¿Va al repo? |
+|---|---|---|
+| `default.xex` | 11 218 944 bytes · SHA-1 `f7ad65e2…55e9f` · tu disco **NTSC-U** | ❌ nunca |
+| `data/` + `datafb/` | ~7 GB de datos del juego | ❌ nunca |
+| Firma de la app | SideStore, AltStore, Sideloadly o tu certificado | — |
+| Un Mac **o** una cuenta de Codemagic | Solo para compilar | — |
 
----
-
-## Paso 0 — Requisitos
-
-| Cosa | Detalle |
-|---|---|
-| Mac | macOS 13+, Xcode 15+ con las Command Line Tools |
-| Homebrew | `cmake`, `ninja`, `python3` |
-| Disco del juego | Storm 3 Full Burst **NTSC-U** |
-| iPhone | iOS 16+, arm64 |
-| Firma | Apple ID gratis (7 días por firma) o cuenta de desarrollador |
-
-**¿Sin Mac?** Salta a la **Opción B** (GitHub Actions) más abajo: compila el `.ipa`
-en la nube con un runner macOS.
-
-**El hash es obligatorio.** El código se recompila desde un ejecutable concreto:
+El hash es obligatorio: el código se recompila desde un ejecutable concreto.
+Si no coincide, el port no arranca — no es configuración, es otro binario.
 
 | Campo | Valor |
 |---|---|
 | Title ID | `4E4D085C` |
 | Media ID | `2576927D` |
-| Versión | `0.0.0.9` |
 | `default.xex` SHA-1 | `f7ad65e26a00df6c29c9d34b291819593e455e9f` |
 | `default.xex` tamaño | 11 218 944 bytes |
 
 ```bash
-shasum -a 1 default.xex
-# f7ad65e26a00df6c29c9d34b291819593e455e9f  default.xex
+extract-xiso -x "Naruto Storm 3 Full Burst.iso" -d app/game
+shasum -a 1 app/game/default.xex
+# f7ad65e26a00df6c29c9d34b291819593e455e9f
 ```
 
-Si el hash no coincide, el port **no arranca**. No es un problema de configuración:
-es otro binario.
+`app/game/` está en `.gitignore`: lo que pongas ahí **no** se commitea por accidente.
 
-## Paso 1 — Prepara los archivos del juego
+---
 
-Antes de nada, si acabas de descomprimir el proyecto:
+## 🗂️ Qué hay en este repositorio
+
+```
+ns3fb-ios/
+├── app/
+│   ├── CMakeLists.txt              target iOS, embebe las dylibs del SDK
+│   ├── game/                       ← TU extracción va aquí (ignorado por git)
+│   ├── generated/                  ← código generado por el codegen (ignorado)
+│   ├── platform/ios/               Info.plist, entitlements, iconos, memext/
+│   └── src/
+│       ├── main.cpp                entry point
+│       └── ns3fb_app.h             rutas iOS, defaults de cvars, marcadores
+├── ci/
+│   ├── patches.list                los 11 parches del SDK, en orden
+│   ├── rexglue-*.patch             los parches
+│   ├── entrypoint_seeds.txt        193 funciones que el codegen no descubre
+│   └── game/                       ← vacío: aquí no viaja el ejecutable
+├── scripts/
+│   ├── 00-fetch-sdk.sh             clona el SDK y aplica el parche iOS + ci/
+│   ├── 01-codegen.sh               recompila TU default.xex a C++
+│   ├── 02-seed-entrypoints.py      aplica entrypoint_seeds.txt al manifest
+│   ├── 03-build-app.sh             compila la app (y genera los iconos)
+│   └── make-ipa.sh                 empaqueta NS3FB.ipa
+├── tools/xex/                      unxex.py y find_callback_thunks.py
+├── docs/                           TROUBLESHOOTING, PERF_MATRIX, RAM_EXTENSION_PLAN
+├── codemagic.yaml                  CI sin Mac (iOS unsigned IPA)
+└── LICENSE / CREDITS.md
+```
+
+---
+
+## 🔨 Compilar
+
+### Opción A — en tu Mac
+
+Requiere macOS 13+, Xcode 15+, `cmake`, `ninja`, `python3`.
 
 ```bash
 chmod +x scripts/*.sh
+cp -R /ruta/a/tu/extraccion/* app/game/    # default.xex + data/ + datafb/
+./scripts/00-fetch-sdk.sh                  # ~30-40 min la primera vez
+./scripts/01-codegen.sh                    # recompila el .xex (~20-30 min)
+./scripts/03-build-app.sh
+./scripts/make-ipa.sh                      # NS3FB.ipa sin firmar
 ```
 
-1. Haz ISO de tu disco y extrae con [`extract-xiso`](https://github.com/XboxDev/extract-xiso):
-   ```bash
-   extract-xiso -x "Naruto Storm 3 Full Burst.iso" -d app/game
-   ```
-2. La carpeta debe quedar así (todo dentro, sin subcarpeta extra):
-   ```
-   app/game/
-   ├── default.xex
-   ├── nxeart
-   ├── AvatarAssetPack
-   ├── data/
-   └── datafb/
-   ```
+### Opción B — en la nube, sin Mac (Codemagic)
 
-## Paso 2 — SDK ReXGlue parcheado para iOS
+El repo trae `codemagic.yaml` con el workflow `ios-unsigned`. **Un repo público no puede
+compilar aquí**: el CI necesita el `default.xex` en el árbol de trabajo y ese archivo no
+está en el repo. La forma correcta es trabajar sobre una **copia privada**:
 
 ```bash
-./scripts/00-fetch-sdk.sh
-```
+git clone https://github.com/juanxd2006/ns3fb-ios.git
+cd ns3fb-ios
+# GitHub: Settings → Danger Zone → Change visibility → Private
 
-Clona `rexglue/rexglue-sdk`, le aplica el parche de iOS de
-[DevZer0D4Y](https://github.com/DevZer0D4Y/MCX360-EDITION) (`sdk/rexglue-sdk-ios.patch`)
-y compila dos cosas: los host tools para macOS y las dylibs para iOS.
-
-Exporta la variable antes de compilar el juego:
-
-```bash
-export REXGLUE_SDK="$PWD/thirdparty/rexglue-sdk"
-```
-
-Ese parche es lo valioso del proyecto de Minecraft: añade fibers `aarch64.S`,
-`memory_posix`/`threading_posix` para iOS, `touch_controls_ios.mm`,
-`surface_ios`, toasts de logros y ajustes de codegen. Es agnóstico al juego.
-
-> En teoría el codegen de CPU (Paso 3) también corre en Linux x86-64, pero el
-> build iOS y la firma exigen macOS. No pierdas tiempo intentándolo en Windows.
-
-## Paso 3 — Recompilar el ejecutable del juego
-
-```bash
-./scripts/01-codegen.sh
-```
-
-Genera en `app/generated/default/`:
-
-- `ns3fb_register.cpp` — ~50 000 registros de punteros a función del binario
-- `ns3fb_init.h`, `sources.cmake` — punto de entrada e includes
-- `app/ns3fb_manifest.toml` — la configuración del proyecto
-
-El manifest es donde está el trabajo real. Empieza genérico y se corrige iterando:
-
-| Campo | Qué hacer con Storm 3 |
-|---|---|
-| `setjmp_address` / `longjmp_address` | Localízalos. Sin ellos, `longjmp` se recompila como una llamada normal que **retorna**, corrompe `r1` y revienta el stack |
-| `[entrypoint.functions]` | El analizador irá reportando funciones no descubiertas (ramas indirectas, tablas en runtime); se añaden aquí |
-| `[project] name` | Debe ser `ns3fb` para que coincida con los targets de `CMakeLists.txt` |
-
-Nada de esto se puede rellenar a ciegas: cada valor sale de ejecutar y leer el log.
-
-## Paso 4 — Compilar la app
-
-```bash
-cd app
-cmake --preset ios-arm64-release
-cmake --build --preset ios-arm64-release
-```
-
-Produce `app/out/build/ios-arm64-release/ns3fb.app` con
-`librexruntime.dylib`, `librexgpu-xenos.dylib` y `libMoltenVK.dylib` embebidas en
-`Frameworks/`.
-
-## Paso 5 — Empaquetar y instalar
-
-```bash
-./scripts/make-ipa.sh          # produce NS3FB.ipa sin firmar
-```
-
-Instala con **AltStore / SideStore / Sideloadly / TrollStore**. Sideloadly necesita
-*Advanced Options → Enable File Sharing*.
-
-Si tienes perfil de desarrollador:
-
-```bash
-PROFILE=~/ruta/al.mobileprovision ./scripts/sign-and-install.sh
-```
-
-## Opción B — compilar en la nube (GitHub Actions, sin Mac)
-
-El repo incluye `.github/workflows/build-ios.yml`, que hace los pasos 2 a 5 en un
-runner `macos-14` (Apple silicon) y deja el `.ipa` como artefacto descargable.
-
-**Lo único que necesitas subir es `ci/game/default.xex`** (11 MB). Los ~7 GB de
-`data/` y `datafb/` no se usan para compilar: van después, dentro del `.ipa` o
-copiados con la app Archivos.
-
-```bash
-# repo PRIVADO: es tu archivo con copyright
 cp "/ruta/a/tu/extraccion/default.xex" ci/game/default.xex
-git add ci/game/default.xex .github ci/game/README.md
-git commit -m "CI build"
+git add -f ci/game/default.xex        # -f: está en .gitignore a propósito
+git commit -m "Game executable for CI (copia privada)"
 git push
 ```
 
-Luego: pestaña **Actions** → *Build iOS IPA* → **Run workflow**.
-
-### Qué esperar del CI
+Luego conecta el repo en Codemagic (*Add application* → GitHub) y lanza `ios-unsigned`.
 
 | Aspecto | Realidad |
 |---|---|
-| Primera ejecución | 1–3 h: compila el SDK entero, hace codegen y compila decenas de miles de funciones recompiladas |
-| Ejecuciones siguientes | Bastante más rápidas: SDK y codegen van cacheados (`thirdparty/` y `app/generated`) |
-| Límite duro | 6 h por job; el workflow corta a los 350 min |
-| Minutos macOS | Se facturan **×10**. El plan gratuito da 2 000 min/mes ≈ **200 min de macOS**, así que la primera build puede no caber |
-| Artefacto | `NS3FB-ipa` → `NS3FB.ipa` sin firmar, listo para Sideloadly |
-| Si falla | Se sube `ns3fb-diagnostics` con el manifest, `build.log` y logs del codegen |
+| Build frío | 45–60 min (compila el SDK entero) |
+| Build con caché caliente | 20–30 min |
+| Tocar cualquier archivo de `ci/` | Invalida la caché del SDK → build frío |
+| Artefacto | `NS3FB.ipa` sin firmar |
+| Workflow `sdk-cache` | Solo calienta la caché del SDK (~2 min si ya está) |
 
-El runner tiene ~14 GB de disco; el workflow borra los árboles de build del SDK
-a propósito antes del codegen, porque si no se queda sin espacio.
+En el log debe aparecer `==> Cached ReXGlue SDK found, skipping build`.
+Si no aparece, estás pagando el build frío otra vez.
 
-> Para recalcular el codegen: *Run workflow* con **clean_codegen** marcado.
+---
 
-## Paso 5b — Meter el juego dentro del IPA (opcional)
+## 📲 Instalar y firmar
 
-Así no hay que copiar nada a mano en el teléfono: los archivos van dentro del
-bundle y la app los lee de `NS3FB.app/game/`.
+El `.ipa` sale **sin firmar**:
 
-```bash
-./scripts/inject-game-files.sh NS3FB.ipa ./game NS3FB-full.ipa
-```
+- **SideStore / AltStore** — firma con tu Apple ID, renovación automática cada 7 días.
+- **Sideloadly** — Apple ID gratis, caduca a los 7 días.
+  *Advanced Options → Enable File Sharing*.
+- **Certificado de desarrollador** propio:
+  ```bash
+  PROFILE=~/ruta/al.mobileprovision ./scripts/sign-and-install.sh
+  ```
 
-`ns3fb_app.h` busca primero en `Documents/game` y, si ahí no hay `default.xex`,
-usa `<bundle>/game`. Documentos gana siempre, así que puedes sobrescribir los
-datos con la app Archivos sin reinstalar.
+> [!TIP]
+> Para que **cambie el icono** hay que desinstalar antes de reinstalar: iOS cachea el
+> icono por bundle ID.
 
-**Coste:** el `.ipa` pasa a ~3–5 GB comprimido. Cada instalación transfiere todo
-otra vez, y durante la instalación iOS necesita cerca del doble de espacio libre.
-Si vas a iterar sobre la app, deja el `.ipa` sin datos y usa la app Archivos.
-
-## Paso 6 — Copiar el juego al iPhone
+### Copiar los datos del juego al iPhone
 
 1. Abre la app una vez y ciérrala (crea las carpetas).
-2. Finder (Mac) → tu iPhone → **Archivos**, o iTunes en Windows.
-3. Dentro de *En mi iPhone / NS3FB*, deja:
-   ```
-   NS3FB/
-   ├── game/            ← todo el contenido del disco
-   │   ├── default.xex
-   │   ├── data/
-   │   └── datafb/
-   ├── userdata/        ← saves y logs (automático)
-   └── ns3fb.toml       ← ajustes (automático, editable en Archivos)
-   ```
+2. Finder → tu iPhone → **Archivos** → *En mi iPhone / NS3FB*:
 
-Si usaste `inject-game-files.sh`, este paso es opcional: solo hace falta para
-cambiar o actualizar los datos del juego.
-
-## Paso 7 — Jugar
-
-Empareja un mando Bluetooth (Xbox/PlayStation/MFi) en Ajustes → Bluetooth y abre
-la app. **Hay controles táctiles** — la capa de touch del parche iOS los activa
-con `touch_controls = "auto"`.
-
----
-
-## Ajustes (`ns3fb.toml`)
-
-Se edita desde la app **Archivos**; los cambios aplican al reiniciar.
-
-| Clave | Default | Qué hace |
-|---|---|---|
-| `gpu_plugin` | `xenos` | Backend gráfico. Vacío = sin gráficos |
-| `license_mask` | `1` | Bit 0 = título comprado |
-| `present_letterbox` | `false` | `false` estira a 19.5:9; `true` respeta 16:9 con barras |
-| `render_target_path_vulkan` | `fbo` | Render targets del host (MSAA por hardware). `fsi` emula EDRAM en el pixel shader: más lento y **rompe la cobertura de samples en MoltenVK** |
-| `fsi_sample_mask_from_sample_id` | `true` | MoltenVK no reporta cobertura del sample 0; hay que derivarla de `gl_SampleID` |
-| `framerate_limit` | `30` | El juego original está atado a 30 (a 60 corre al doble de velocidad) |
-| `clear_memory_page_state` | `false` | Si no, se re-sube todo a la GPU cada frame |
-| `vulkan_submit_on_primary_buffer_end` | `false` | Un submit por frame en vez de uno por buffer |
-| `vulkan_allow_present_mode_immediate/mailbox/fifo_relaxed` | `false` | Solo FIFO: frames parejos |
-| `async_shader_compilation` | `false` | Evita que se salten dibujos con pipeline sin compilar |
-| `execute_unclipped_draw_vs_on_cpu` | `true` | Necesario para clears con scissor infinito |
-| `audio_maxqframes` | `16` | ~85 ms de colchón; menos da audio entrecortado |
-| `touch_controls` | `auto` | `auto` / `on` / `off`; `touch_controls_opacity` 0.1–1.0 |
-
----
-
-## El blocker que tienes que conocer: memoria
-
-El `ns3fb.entitlements` pide:
-
-```xml
-<key>com.apple.developer.kernel.extended-virtual-addressing</key><true/>
+```
+NS3FB/
+├── game/          ← default.xex, data/, datafb/
+├── userdata/      ← saves y logs (automático)
+└── ns3fb.toml     ← ajustes (automático, editable)
 ```
 
-El mapa de memoria del invitado necesita una reserva contigua de ~4.5 GB. En
-dispositivos con 3 GB de RAM solo cabe con direccionamiento extendido, y **ese
-entitlement no lo concede un Apple ID gratis**. Se queda en:
-TrollStore, jailbreak o cuenta de desarrollador de pago con la capability activada.
-Con Apple ID gratis en un iPhone de 3 GB verás *"not enough free address space"*.
-
-En iPhone de 6/8 GB puede colar sin el entitlement, pero nadie lo ha probado con
-Storm 3.
+Opcional: `scripts/inject-game-files.sh` mete los datos dentro del `.ipa`
+(→ ~3-5 GB por instalación). Para iterar sobre la app, mejor sin datos.
 
 ---
 
-## Créditos y licencias
+## ⚙️ Ajustes
 
-Ver [CREDITS.md](CREDITS.md). Resumen: el mérito de que esto sea posible es de
-**DevZer0D4Y** (capa iOS del SDK), **ReXGlue**, **Xenia** y **MoltenVK**.
+`NS3FB/Documents/ns3fb.toml`, editable desde la app Archivos; aplica al reiniciar.
+Esta es la configuración medida:
 
-Proyecto de fans, sin ánimo de lucro, sin relación con Bandai Namco, CyberConnect2,
-Ubisoft, VIZ Media o Microsoft.
+```toml
+video_mode_width = 960
+video_mode_height = 540
+present_effect = "cas"          # o "fsr"
+present_cas_additional_sharpness = 0.4
+msaa_override = 0
+direct_host_resolve = false
+execute_unclipped_draw_vs_on_cpu = true
+anisotropic_override = 0
+present_dither = false
+clear_memory_page_state = false
+vulkan_submit_on_primary_buffer_end = false
+async_shader_compilation = false
+readback_resolve = "none"
+readback_memexport = false
+texture_cache_memory_limit_soft = 320
+texture_cache_memory_limit_hard = 640
+texture_cache_memory_limit_rtt = 24
+framerate_limit = 30            # el original está atado a 30
+vsync = true
+```
+
+El juego original corre a 30 fps fijos: a 60 va al doble de velocidad.
+
+---
+
+## 📊 Rendimiento
+
+iPhone 11 (A13), Metal HUD:
+
+| Resolución | GPU (ms) | Compute (ms) | Fragment (ms) | FPS |
+|---|---|---|---|---|
+| 1280×720 | 54–55 | 28,5 | 19,0 | 18,2 |
+| 960×540 | 22–27 | 10–11 | 11–13 | 30 |
+
+A 720p el **51 % del frame** son los compute shaders de volcado de EDRAM
+(~129 compute encoders por frame): coste fijo por resolve, no ajustable por
+configuración. Por eso 720p está descartado salvo que se escriban shaders de
+resolve directo (proyecto aparte).
+
+**Ya medido y descartado**, para que nadie lo repita:
+
+- `msaa_override = 1` no baja el compute (28,05 → 26,39 ms) y **corrompe la imagen**.
+- `direct_host_resolve` no acelera: `TryResolveCopyDirectly()` acaba en
+  `return DumpRenderTargets(...)`. Mismo stub en D3D12.
+- `execute_unclipped_draw_vs_on_cpu_with_scissor` no mueve el compute.
+- Ruta `fsi` es más lenta en este juego. `keep_pass_open` da ~7 %, descartado.
+
+---
+
+## 🔍 Depurar
+
+Todo el diagnóstico es por log, sin recompilar. En `NS3FB/Documents/` basta duplicar y
+renombrar archivos:
+
+| Marcador | Efecto |
+|---|---|
+| `diag_on.txt` | Enciende `NS3FB-*` (>200 líneas/s, el juego deja de responder) |
+| `msaa1.txt` / `msaa2.txt` / `msaa4.txt` | Fuerza `msaa_override` |
+| `ztest_off.txt` / `blend_off.txt` | Overrides de diagnóstico |
+| `mvk.txt` | Líneas `MVK_CONFIG_XXX=valor` |
+
+Los marcadores pisan el `ns3fb.toml`.
+
+### `NS3FB-TRAP` — el bug que queda
+
+```
+NS3FB-TRAP 0x825A7258 unregistered guest function, continuing as no-op
+```
+
+El juego llamó a una función que el codegen no descubrió (no está en `.pdata`, solo se
+alcanza por punteros construidos en runtime) y se ejecutó como no-op. Síntomas típicos:
+una animación que se corta, un menú que no avanza, una pantalla que se queda cargando.
+
+Se arregla sembrando la dirección en `ci/entrypoint_seeds.txt` (una por línea,
+`0xXXXXXXXX`, con un comentario de fecha y síntoma). **Ya hay 193**; con eso los traps
+bajaron de 10 por sesión a 0–4.
+
+```bash
+python3 tools/xex/unxex.py app/game/default.xex /tmp/image.bin
+python3 tools/xex/find_callback_thunks.py /tmp/image.bin
+```
+
+---
+
+## 🧠 Memoria y entitlements
+
+`ns3fb.entitlements` pide `com.apple.developer.kernel.extended-virtual-addressing`: el
+mapa de memoria del invitado necesita ~4.5 GB contiguos. Un Apple ID gratuito **no**
+concede ese entitlement, así que en dispositivos de 3 GB verás *"not enough free address
+space"* salvo con TrollStore, jailbreak o cuenta de pago. Hoy la app usa ~1,33 GB de 3 GB.
+
+`sustained-execution` e `increased-memory-limit` están documentados y **comentados**: con
+Apple ID gratis la firma falla si los dejas activos.
+
+---
+
+## ⚖️ Legal
+
+- Proyecto de fans, sin ánimo de lucro. Sin relación con Bandai Namco, CyberConnect2,
+  VIZ Media ni Microsoft. *Naruto* y *Naruto Shippuden: Ultimate Ninja Storm 3 Full
+  Burst* son marcas y obras de sus titulares.
+- Este repositorio **no incluye ni distribuye** archivos del juego. El código generado
+  por el codegen es una obra derivada de **tu** `default.xex`: no lo redistribuyas.
+- **No abras issues pidiendo o compartiendo archivos del juego.** Se cierran sin respuesta.
+- No publicable en la App Store. Solo sideload / TestFlight interno.
+- Licencia del código: [LICENSE](LICENSE) · Terceros: [CREDITS.md](CREDITS.md)
+
+## 🙏 Créditos
+
+El mérito de que esto sea posible es de **DevZer0D4Y** (capa iOS del SDK ReXGlue),
+**ReXGlue**, **Xenia**, **XenonRecomp**, **XenosRecomp** y **MoltenVK**.
+Detalle completo en [CREDITS.md](CREDITS.md).
+
+<div align="center">
+<sub>Hecho por fans, para fans. Trae tu propio disco.</sub>
+</div>

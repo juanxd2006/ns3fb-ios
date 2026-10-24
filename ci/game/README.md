@@ -1,34 +1,60 @@
-# ci/game — el ejecutable del juego para el build en la nube
+# ci/game — aquí NO va el ejecutable del juego
 
-Aquí va **un solo archivo**:
+Esta carpeta está **vacía a propósito**.
 
-```
-ci/game/default.xex
-```
+En algún momento de este proyecto el repo era privado y aquí vivía `default.xex`
+para que la CI pudiera compilar. Ya no: el repositorio es público y este
+directorio no contiene ni contendrá nada de Bandai Namco / CyberConnect2.
 
-11 218 944 bytes, SHA-1 `f7ad65e26a00df6c29c9d34b291819593e455e9f`, extraído de tu
-propio disco NTSC-U de *Naruto Shippuden: Ultimate Ninja Storm 3 Full Burst*.
+## Si vas a compilar en la nube (Codemagic / GitHub Actions)
 
-El codegen necesita este archivo **durante el build**, porque el código C++
-recompilado se genera a partir de él. No hay forma de compilar sin él, y no se
-puede sustituir por los datos del juego (`data/`, `datafb/`), que son otra cosa.
-
-## Cómo subirlo
-
-El repo tiene que ser **privado**: es un archivo con copyright y solo debe estar
-en tu copia personal. El `.gitignore` de la raíz ignora `app/game/`, pero `ci/`
-no está ignorado, así que:
+El CI necesita el ejecutable **en el árbol de trabajo**, así que tiene que estar
+en un repo privado. La forma correcta:
 
 ```bash
+# 1. Trabaja siempre sobre una copia privada del repo
+#    (clone + Settings → Change visibility → Private, o importa como privado)
+
+# 2. Añade tu ejecutable SOLO a esa copia privada
 cp "/ruta/a/tu/extraccion/default.xex" ci/game/default.xex
-git add ci/game/default.xex
-git commit -m "Add game executable for CI"
+git add -f ci/game/default.xex        # -f: está en .gitignore
+git commit -m "Game executable for CI (copia privada)"
 git push
 ```
 
-## Lo que NO va aquí
+`-f` es necesario porque `.gitignore` ignora `ci/game/*.xex` justamente para que
+no se suba por accidente a un repo público.
 
-- `data/` y `datafb/` (~7 GB): no se usan para compilar. Se añaden al `.ipa`
-  después con `scripts/inject-game-files.sh`, o se copian al iPhone con la app
-  Archivos.
-- Cualquier otra cosa del disco.
+## Si compilas en tu Mac
+
+No necesitas nada aquí. Pon el juego directamente en `app/game/`:
+
+```bash
+extract-xiso -x "Naruto Storm 3 Full Burst.iso" -d app/game
+shasum -a 1 app/game/default.xex
+# f7ad65e26a00df6c29c9d34b291819593e455e9f
+```
+
+`app/game/` está ignorado por git: nunca se commitea.
+
+## Requisitos del archivo
+
+| Campo | Valor |
+|---|---|
+| Nombre | `default.xex` |
+| Tamaño | 11 218 944 bytes |
+| SHA-1 | `f7ad65e26a00df6c29c9d34b291819593e455e9f` |
+| Región | NTSC-U, *Storm 3 Full Burst* |
+
+`scripts/01-codegen.sh` aborta si el hash no coincide.
+
+## Lo que tampoco va aquí
+
+- `data/` y `datafb/` (~7 GB): no se usan para compilar. Van al iPhone con la app
+  Archivos, o dentro del `.ipa` con `scripts/inject-game-files.sh`.
+- Cualquier otra cosa extraída del disco.
+
+## No compartas archivos del juego
+
+Ni en issues, ni en PRs, ni en enlaces. Los issues que pidan o publiquen archivos
+del juego se cierran sin respuesta.

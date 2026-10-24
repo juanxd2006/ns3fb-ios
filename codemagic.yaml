@@ -66,6 +66,23 @@ workflows:
 
       - name: Stage game executable
         script: |
+          # ---------------------------------------------------------------------
+          # El repo es PUBLICO y no incluye el ejecutable del juego: lo aporta el
+          # usuario desde su propia copia. Este workflow solo funciona en una
+          # copia PRIVADA del repo con ci/game/default.xex añadido con `git add -f`.
+          # Ver ci/game/README.md.
+          # ---------------------------------------------------------------------
+          if [ ! -f ci/game/default.xex ]; then
+            echo "ERROR: falta ci/game/default.xex"
+            echo ""
+            echo "Este repositorio no distribuye archivos del juego. Para compilar:"
+            echo "  1. Trabaja sobre una copia PRIVADA del repo"
+            echo "  2. cp /ruta/a/tu/extraccion/default.xex ci/game/default.xex"
+            echo "  3. git add -f ci/game/default.xex && git commit -m '...' && git push"
+            echo ""
+            echo "Si compilas en un Mac, ponlo en app/game/ y usa los scripts locales."
+            exit 1
+          fi
           mkdir -p app/game
           cp ci/game/default.xex app/game/default.xex
           shasum -a 1 app/game/default.xex
@@ -98,13 +115,16 @@ workflows:
       - app/ns3fb_manifest.toml
       - $CM_BUILD_DIR/**/*.log
 
-    publishing:
-      email:
-        recipients:
-          - soysebas39@gmail.com
-        notify:
-          success: true
-          failure: true
+    # Notificaciones: pon tu email aquí, o borra este bloque.
+    # Ojo: este archivo es público; si no quieres tu dirección en el repo,
+    # déjalo comentado y configura la notificación en la UI de Codemagic.
+    # publishing:
+    #   email:
+    #     recipients:
+    #       - tu@email.com
+    #     notify:
+    #       success: true
+    #       failure: true
 
   # Workflow auxiliar: compila SOLO el SDK y termina siempre en verde.
   # Sirve para poblar la caché sin depender de que el codegen (que todavia
