@@ -71,6 +71,15 @@ class Ns3fbApp : public rex::ReXApp {
     // quedarse muerto.
     setenv("MVK_CONFIG_RESUME_LOST_DEVICE", "1", 1);
 
+    // Envios asincronos a la cola de MoltenVK. Por defecto MoltenVK codifica
+    // dentro de vkQueueSubmit, con el lock de la cola tomado: medido en un port
+    // hermano (NFSMW, mismo SDK y mismo MoltenVK), cada vkQueueSubmit de UI
+    // gastaba 12-17 ms y el command processor esperaba 7-8 ms por frame.
+    // Asincrono, la codificacion ocurre en su propia cola de dispatch.
+    // El marcador mvk_async_submit.txt fija lo mismo, y Documents/mvk.txt puede
+    // volver a 1 para comparar.
+    setenv("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0", 1);
+
     // Ajustes de MoltenVK desde un archivo editable en la app Archivos, para
     // poder hacer A/B de cada opcion sin recompilar:
     //   Documents/mvk.txt  ->  lineas "MVK_CONFIG_XXX=valor"
@@ -296,6 +305,15 @@ class Ns3fbApp : public rex::ReXApp {
     //
     // Anisotropico a 3x por defecto: cuesta ancho de banda y a 720p no se nota.
     rex::cvar::SetDefaultByName("anisotropic_override", "0");
+    // Estimar la altura real del render target tambien en draws con scissor.
+    //
+    // Aqui la CPU esta ociosa (6,5 ms por frame) y la GPU es el cuello de
+    // botella: el 51 % del frame a 720p son los compute shaders que vuelcan
+    // EDRAM, y su tamano sale del rango que reclama cada pase. Con esto se
+    // estima el alcance real del draw (gastando CPU, que sobra) y el volcado
+    // cubre menos tiles. El propio SDK avisa de que puede procesar mas vertices
+    // en la CPU: es exactamente el intercambio que interesa aqui.
+    rex::cvar::SetDefaultByName("execute_unclipped_draw_vs_on_cpu_with_scissor", "true");
     // Metal no tiene geometry shaders, asi que los point sprites (chispas,
     // humo, particulas de los jutsus) se expandian por la ruta lenta de
     // primitivas. Expandirlos en el vertex shader es mucho mas barato.
