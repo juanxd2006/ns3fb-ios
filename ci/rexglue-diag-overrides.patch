@@ -1,0 +1,100 @@
+--- a/include/rex/graphics/flags.h
++++ b/include/rex/graphics/flags.h
+@@ -43,6 +43,12 @@
+ // MSAA del host forzado desde la configuracion: 0 = lo que pida el invitado,
+ // 1 / 2 / 4 = numero de muestras forzado. Ver register_file.h.
+ REXCVAR_DECLARE(int32_t, msaa_override);
++// Diagnostico del 3D negro: apagan, respectivamente, el z test y el blending
++// del host en todos los draws. Sirven para separar "el mundo falla el depth
++// test" de "el fragmento sale sin color". Ver register_file.h y los marcadores
++// Documents/ztest_off.txt y blend_off.txt.
++REXCVAR_DECLARE(bool, ztest_off);
++REXCVAR_DECLARE(bool, blend_off);
+ REXCVAR_DECLARE(bool, snorm16_render_target_full_range);
+ REXCVAR_DECLARE(bool, mrt_edram_used_range_clamp_to_min);
+ REXCVAR_DECLARE(bool, direct_host_resolve);
+--- a/src/graphics/flags.cpp
++++ b/src/graphics/flags.cpp
+@@ -21,6 +21,13 @@
+ // derivan el render pass, las pipelines y el shader de resolve.
+ REXCVAR_DEFINE_INT32(msaa_override, 0, "GPU",
+                      "Force the host MSAA sample count (0 = guest, 1, 2 or 4)");
++// NS3FB: overrides de diagnostico del 3D negro. Se aplican en
++// RegisterFile::Get<> para que el estado del draw, la clave de las pipelines y
++// el pipeline creado vean exactamente el mismo valor (ver register_file.h).
++REXCVAR_DEFINE_BOOL(ztest_off, false, "GPU",
++                    "Force the depth test off in all draws (3D black diagnosis)");
++REXCVAR_DEFINE_BOOL(blend_off, false, "GPU",
++                    "Force blending off in all draws (3D black diagnosis)");
+ REXCVAR_DEFINE_BOOL(depth_float24_round, false, "GPU", "Round float24 depth values");
+ REXCVAR_DEFINE_BOOL(depth_float24_convert_in_pixel_shader, false, "GPU",
+                     "Convert float24 depth in pixel shader");
+--- a/include/rex/graphics/register_file.h
++++ b/include/rex/graphics/register_file.h
+@@ -65,6 +65,55 @@
+   }
+ }
+ 
++// NS3FB: overrides de diagnostico del 3D negro.
++//
++//   ztest_off  fuerza z_enable = 0 en RB_DEPTHCONTROL. Si con esto aparece la
++//              geometria que salia negra, el problema era el depth test (el
++//              buffer de profundidad tenia un contenido inesperado), no el
++//              shader ni el blending.
++//   blend_off  fuerza One/Zero/Add, que es exactamente la condicion con la que
++//              pipeline_cache.cpp pone blendEnable = VK_FALSE. Si con esto
++//              aparece, el culpable es el blending: el alpha que escribe el
++//              shader se estaba mezclando contra un destino negro.
++//
++// Se aplican en la LECTURA de los registros, no en el pipeline, porque de esa
++// lectura derivan a la vez el estado del draw, la clave de las pipelines y la
++// creacion del pipeline: asi no puede quedar un estado incoherente entre capas.
++// El valor se consulta una sola vez (los cvars quedan fijados antes de crear el
++// VkDevice) para no pagar un lookup por draw.
++inline reg::RB_DEPTHCONTROL ApplyZTestOverride(reg::RB_DEPTHCONTROL depth_control) {
++  static const bool forced_off = [] {
++    const bool value = ::rex::cvar::Query<bool>("ztest_off");
++    if (value) {
++      REXLOG_INFO("NS3FB: ztest_off=1 (z test forzado a OFF en todos los draws)");
++    }
++    return value;
++  }();
++  if (forced_off) {
++    depth_control.z_enable = 0;
++  }
++  return depth_control;
++}
++
++inline reg::RB_BLENDCONTROL ApplyBlendOverride(reg::RB_BLENDCONTROL blend_control) {
++  static const bool forced_off = [] {
++    const bool value = ::rex::cvar::Query<bool>("blend_off");
++    if (value) {
++      REXLOG_INFO("NS3FB: blend_off=1 (blending forzado a OFF en todos los draws)");
++    }
++    return value;
++  }();
++  if (forced_off) {
++    blend_control.color_srcblend = xenos::BlendFactor::kOne;
++    blend_control.color_comb_fcn = xenos::BlendOp::kAdd;
++    blend_control.color_destblend = xenos::BlendFactor::kZero;
++    blend_control.alpha_srcblend = xenos::BlendFactor::kOne;
++    blend_control.alpha_comb_fcn = xenos::BlendOp::kAdd;
++    blend_control.alpha_destblend = xenos::BlendFactor::kZero;
++  }
++  return blend_control;
++}
++
+ struct RegisterInfo {
+   enum class Type {
+     kDword,
+@@ -91,6 +140,10 @@
+     T value = rex::memory::Reinterpret<T>(values[reg]);
+     if constexpr (std::is_same_v<T, reg::RB_SURFACE_INFO>) {
+       value.msaa_samples = ApplyMsaaOverride(value.msaa_samples);
++    } else if constexpr (std::is_same_v<T, reg::RB_DEPTHCONTROL>) {
++      value = ApplyZTestOverride(value);
++    } else if constexpr (std::is_same_v<T, reg::RB_BLENDCONTROL>) {
++      value = ApplyBlendOverride(value);
+     }
+     return value;
+   }
