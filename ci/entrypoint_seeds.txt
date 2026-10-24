@@ -93,3 +93,9 @@
 0x825A7AB8
 0x825A78D8
 0x82264BE0
+
+# --- 2026-10-24 01:06: pantalla de resultados de Ryos ------------------------
+# Los resultados YA aparecen (las 5 primeras semillas funcionaron), pero la
+# pantalla de "Money Obtained" no avanza. Al intentar la definitiva volvio a
+# salir 0x82264BE0, que ya esta sembrada arriba (build no instalado aun).
+0x825A7AF8
