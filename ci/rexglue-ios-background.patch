@@ -35,11 +35,42 @@ index d54df86..6a63b54 100644
    // Host presentation objects for ReXApp's overlay wiring; custom systems may
    // leave these null.
    virtual ui::GraphicsProvider* provider() const { return nullptr; }
+diff --git a/include/rex/ui/presenter.h b/include/rex/ui/presenter.h
+index afb4a30..bfd9692 100644
+--- a/include/rex/ui/presenter.h
++++ b/include/rex/ui/presenter.h
+@@ -374,6 +374,17 @@ class Presenter {
+   // Requests (re)painting with the UI if there's UI to draw.
+   void RequestUIPaintFromUIThread();
+ 
++  // NS3FB iOS: al pasar a segundo plano iOS revoca el permiso de enviar trabajo
++  // a la GPU, y el primer submit posterior pierde el VkDevice para siempre
++  // (kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted). Parar el
++  // invitado no basta: el presentador sigue adquiriendo imagenes del swapchain,
++  // y esa es la otra ruta que mata el dispositivo. Mientras esto esta activo,
++  // PaintAndPresent sale sin tocar la GPU; al volver a primer plano se desactiva
++  // y el siguiente paint presenta con normalidad.
++  void SetPresentationSuspended(bool suspended) {
++    presentation_suspended_.store(suspended, std::memory_order_relaxed);
++  }
++
+  protected:
+   enum class PaintResult {
+     kPresented,
+@@ -992,6 +1003,8 @@ class Presenter {
+   // deferred and be handled by the tail of PaintFromUIThread for consistency
+   // with what PaintFromUIThread does internally.
+   bool is_in_ui_thread_paint_ = false;
++  // NS3FB iOS: ver SetPresentationSuspended.
++  std::atomic<bool> presentation_suspended_{false};
+   bool request_guest_output_paint_after_current_ui_thread_paint_;
+   bool request_ui_paint_after_current_ui_thread_paint_;
+ 
 diff --git a/src/graphics/graphics_system.cpp b/src/graphics/graphics_system.cpp
-index 8f2fcb0..4cd60b7 100644
+index 6c59ba6..16af8f0 100644
 --- a/src/graphics/graphics_system.cpp
 +++ b/src/graphics/graphics_system.cpp
-@@ -365,11 +365,25 @@ void GraphicsSystem::InitializeShaderStorage(const std::filesystem::path& cache_
+@@ -385,11 +385,25 @@ void GraphicsSystem::InitializeShaderStorage(const std::filesystem::path& cache_
  }
  
  void GraphicsSystem::Pause() {
@@ -65,8 +96,25 @@ index 8f2fcb0..4cd60b7 100644
    paused_ = false;
    command_processor_->Resume();
  }
+diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
+index 7360ed9..978835a 100644
+--- a/src/ui/presenter.cpp
++++ b/src/ui/presenter.cpp
+@@ -1495,6 +1495,12 @@ bool Presenter::InSurfaceOnMonitorFromUIThread() const {
+ }
+ 
+ Presenter::PaintResult Presenter::PaintAndPresent(bool execute_ui_drawers) {
++  // NS3FB iOS: con la app en segundo plano no se puede tocar la GPU (ver
++  // Presenter::SetPresentationSuspended). Se sale antes de cualquier submit o
++  // de cualquier vkAcquireNextImageKHR.
++  if (presentation_suspended_.load(std::memory_order_relaxed)) {
++    return PaintResult::kNotPresented;
++  }
+   assert_false(execute_ui_drawers && !is_in_ui_thread_paint_);
+   assert_true(surface_paint_connection_state_ == SurfacePaintConnectionState::kConnectedPaintable);
+   PaintResult result = PaintAndPresentImpl(execute_ui_drawers);
 diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
-index b94fe9e..27449b2 100644
+index 319038a..0312830 100644
 --- a/src/ui/rex_app.cpp
 +++ b/src/ui/rex_app.cpp
 @@ -13,6 +13,12 @@
@@ -82,13 +130,24 @@ index b94fe9e..27449b2 100644
  #include <rex/assert.h>
  #include <rex/cvar.h>
  #include <rex/ui/flags.h>
-@@ -535,11 +541,25 @@ void ReXApp::OnDpiChanged(ui::UISetupEvent& e) {
+@@ -38,6 +44,7 @@
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/xthread.h>
+ #include <rex/ui/graphics_provider.h>
++#include <rex/ui/presenter.h>
+ #include <rex/ui/keybinds.h>
+ #include <rex/version.h>
+ #include <rex/platform.h>
+@@ -597,11 +604,34 @@ void ReXApp::OnDpiChanged(ui::UISetupEvent& e) {
  
  void ReXApp::OnGotFocus(ui::UISetupEvent& e) {
    (void)e;
 +#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 +  // Reanudar el command processor antes de que el invitado vuelva a dibujar.
 +  if (config_.graphics) {
++    if (auto* presenter = config_.graphics->presenter()) {
++      presenter->SetPresentationSuspended(false);
++    }
 +    config_.graphics->Resume();
 +  }
 +#endif
@@ -102,6 +161,12 @@ index b94fe9e..27449b2 100644
 +  // estar en primer plano. Si el invitado llega a hacer un submit despues, el
 +  // VkDevice se pierde y no se recupera: pantalla negra permanente.
 +  if (config_.graphics) {
++    // NS3FB iOS: parar tambien la presentacion, no solo al invitado. El
++    // presentador adquiere imagenes del swapchain desde el hilo de UI y ese
++    // submit es el que pierde el VkDevice al volver de segundo plano.
++    if (auto* presenter = config_.graphics->presenter()) {
++      presenter->SetPresentationSuspended(true);
++    }
 +    config_.graphics->Pause();
 +  }
 +#endif
@@ -109,10 +174,10 @@ index b94fe9e..27449b2 100644
  }
  
 diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
-index 2251429..1c0355e 100644
+index c842eb6..a4802fd 100644
 --- a/src/ui/window_sdl.cpp
 +++ b/src/ui/window_sdl.cpp
-@@ -483,6 +483,17 @@ void WindowSDL::HandleWindowEvent(SDL_Event& event) {
+@@ -494,6 +494,17 @@ void WindowSDL::HandleWindowEvent(SDL_Event& event) {
        // The platform cannot retain the previous image; force the paint.
        OnPaint(true);
        break;
