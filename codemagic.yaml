@@ -194,3 +194,36 @@ workflows:
           ls -lh MetalSpike.ipa
     artifacts:
       - MetalSpike.ipa
+
+  # ---------------------------------------------------------------------------
+  # Experimento 720p: mide en el movil si un backend Metal nativo puede dejar el
+  # frame de 720p dentro del presupuesto de 30 fps. Ver
+  # docs/METAL_720P_EXPERIMENT.md.
+  #
+  # No compila el SDK ni necesita default.xex: es un solo .mm con clang, ~1-2
+  # minutos. Produce Metal720p.ipa aparte, con su propio bundle ID, y solo se
+  # dispara con la rama del experimento para no gastar minutos en cada push.
+  # ---------------------------------------------------------------------------
+  ios-metal-720p:
+    name: Metal 720p (budget)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: 16.4
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: experiment/metal-720p
+          include: true
+      cancel_previous_builds: true
+    scripts:
+      - name: Build budget IPA
+        script: |
+          set -e
+          xcodebuild -version
+          bash spike/metal-720p/build-ipa.sh
+          ls -lh Metal720p.ipa
+          shasum -a 256 Metal720p.ipa
+    artifacts:
+      - Metal720p.ipa
