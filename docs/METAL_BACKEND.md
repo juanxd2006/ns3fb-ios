@@ -3,6 +3,19 @@
 Documento de decisión. No es una promesa: es el análisis que hay que leer antes de
 gastar semanas, con los números medidos en este port.
 
+> [!IMPORTANT]
+> **Corrección (2026-10-28).** Este documento afirmaba en su sección 2 que *«no
+> existe un backend Metal de Xenia en ningún sitio»*. Ya no es cierto: **XeniOS**
+> y **Xenia-Edge** tienen `src/xenia/gpu/metal/` — 33.092 líneas en 38 archivos,
+> licencia BSD-3, incluido `metal_direct_host_resolve.cc` (1.000 líneas), que es
+> justo el resolve directo que el camino Vulkan de ReXGlue deja como stub. Hay
+> referencia que copiar. Lo que sigue siendo cierto es que ReXGlue sólo tiene
+> `d3d12` y `vulkan`, y el análisis de coste por copia de la sección 1.
+>
+> Antes de decidir nada, el experimento barato que falta:
+> [`METAL_720P_EXPERIMENT.md`](METAL_720P_EXPERIMENT.md) — mide en tu móvil si
+> 720p a 30 fps cabe en el presupuesto una vez eliminadas las copias.
+
 ## 1. El dato que decide todo
 
 Medición en dispositivo (iPhone 11 / A13, `render_target_path_vulkan = "fbo"`,
@@ -43,10 +56,10 @@ Referencia: la implementación Vulkan existente, que ya está escrita y depurada
 
 Y eso sin contar MoltenVK, que hoy te da gratis la traducción Vulkan→Metal.
 
-Un backend Metal sería comparable en tamaño, pero **sin referencia que copiar**:
-Xenia tiene D3D12 y Vulkan; ReXGlue, lo mismo. No existe un backend Metal de
-Xenia en ningún sitio. Serías el primero, sin código del que aprender los casos
-raros que ya están resueltos en las otras dos implementaciones.
+Un backend Metal sería comparable en tamaño. La referencia existe desde 2026:
+`src/xenia/gpu/metal/` de XeniOS / Xenia-Edge (33.092 líneas, BSD-3), con los
+casos raros ya resueltos — pero escrita contra la estructura de Xenia, no contra
+la de ReXGlue, así que el trabajo es de adaptación, no de copia.
 
 ## 3. Lo único que un backend Metal haría mejor
 
