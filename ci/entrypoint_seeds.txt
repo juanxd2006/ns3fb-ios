@@ -348,3 +348,52 @@
 0x8269d648  # slot 0x1C
 0x8269eef8  # slot 0x58
 0x826acb68  # slot 0x04
+
+# --- 2026-10-28: inicios de las funciones que contienen entradas interiores ---
+# El invitado llama por puntero a direcciones que caen DENTRO de una funcion.
+# Sembrarlas compila el cuerpo desde ahi, y ese cuerpo desapila un frame que
+# nunca apilo: devuelve un valor arbitrario y corrompe el estado (incluido un
+# constructor escribiendo su vtable en una direccion basura).
+#
+# Auditadas las 193 semillas anteriores: 45 no son inicios de funcion, y 40 de
+# ellas tocan r1 o registros callee-saved que no han puesto -> peligrosas.
+# El parche ci/rexglue-alias-interior.patch redirige las 42 entradas conocidas a
+# la funcion que las contiene (tabla en el propio parche).
+#
+# Estas 32 son los inicios de esas funciones: sin sembrarlas, la redireccion
+# caeria en el trap y volveria a no-op, que es justo lo que hay que evitar.
+# Encontradas hacia atras desde cada entrada por el patron de prologo
+# (mflr r12 / stw r12,-8(r1) / std r31 / stwu r1,-N(r1)) y comprobando que la
+# instruccion anterior sea un terminador (blr / b / bctr / relleno).
+0x821e82a8
+0x82261ba0
+0x82264bb8
+0x8226c748
+0x822725f0
+0x82272cd0
+0x82296c68
+0x8239b2a8
+0x82526c10
+0x82575d68
+0x825a7218
+0x825a72e8
+0x825a7380
+0x825a73d8
+0x825e30d0
+0x825eb770
+0x82605478
+0x8262c528
+0x8269d1e0
+0x8269e8f0
+0x826e4be0
+0x826ec220
+0x82723078
+0x82768268
+0x8276ca78
+0x8276f268
+0x827d9b18
+0x827dd370
+0x828401e8
+0x828628b8
+0x82868b78
+0x828de598
