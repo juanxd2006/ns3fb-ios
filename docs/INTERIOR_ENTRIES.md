@@ -70,94 +70,64 @@ Es decir: **40 call sites llevan desde el 2026-10-22 ejecutando cuerpos que no
 son funciones completas**, cada uno con su corrupción silenciosa. No es un bug;
 es una clase de bug.
 
-## 4. El arreglo: dos niveles
+## 4. El arreglo (corregido tras un fallo real)
 
-`ci/rexglue-alias-interior.patch` actúa en `src/system/function_dispatcher.cpp` con
-dos mecanismos, del más determinista al más general:
-
-### Nivel 1 — tabla curada
-
-Mapa de las 42 entradas ya identificadas a la función que las contiene. Se aplica
-en `ResolveIndirectFunction`, **antes** de buscar en la tabla de funciones, así que
-el cuerpo mal compilado no se ejecuta nunca. Coste cero, comportamiento fijo.
+La primera version de este parche tenia **tabla curada + 32 semillas nuevas**. El
+build de esa version moria a los 4 segundos:
 
 ```
-NS3FB-ALIAS 0x825A73F8 -> 0x825A73D8 (entrada interior: se ejecuta la funcion completa)
+[critical] [FATAL] Unresolved branch from 0x825EB99C to 0x825EB758
 ```
 
-### Nivel 2 — detección en runtime
+### Por que fallo
 
-Cuando una llamada **cae en el trap** (nadie la resolvió), antes de devolver el
-no-op se busca hacia atrás el inicio de la función que contiene la dirección y se
-ejecuta entera. El escaneo exige tres cosas para no redirigir a tontas:
+Dos errores, el mismo de fondo: **creer que se puede saber donde acaba una funcion
+sin la tabla de excepciones**.
 
-1. patrón de prólogo (`mflr r12` + `stw r12,-8(r1)`, o `stwu r1,-N(r1)`),
-2. que la instrucción anterior sea un terminador (`blr`/`b`/`bctr`/relleno),
-3. que la función encontrada **contenga** la dirección (su primer `blr` no puede
-   quedar antes).
+1. **Sembrar `0x825EB770` partio una funcion.** Esa direccion tiene pinta de inicio
+   de funcion (mflr r12 / stw r12,-8(r1) / stwu r1,-N(r1)) y le precede un `blr`,
+   pero estaba **dentro** de una funcion mas grande. Al declararla inicio, la
+   funcion original quedo truncada y un salto interno suyo (`0x825EB99C` ->
+   `0x825EB758`) paso a cruzar una frontera que antes no existia: irresoluble, y
+   el juego muere.
+2. **La tabla curada tenia 16 de 42 entradas mal.** Se calcularon buscando "el
+   primer `blr` despues del candidato" para saber donde acaba la funcion. **Ese
+   criterio es falso: MSVC fusiona epilogos**, asi que un `blr` puede aparecer en
+   medio de una funcion. Ejemplo: `0x825EBAC8` se mapeo a `0x825EB770`, cuya
+   funcion termina en `0x825EB7B8`, 0x310 bytes antes de la entrada.
+
+### Como queda
+
+**Solo deteccion en runtime.** Cuando una llamada cae en el trap, se busca hacia
+atras el inicio de la funcion que la contiene y se ejecuta entera, con tres
+controles: prologo valido, terminador antes, y que la funcion contenga la
+direccion. Si algo no cuadra, no-op (como antes).
+
+Por que es seguro, y por que se quitaron las semillas:
+
+- **No crea fronteras de funcion.** Es lo que rompio el build anterior: sembrar
+  parte funciones. Detectar en el momento de la llamada no toca el codegen.
+- **No necesita saber donde acaba la funcion** para nada que pueda romper el
+  arranque: peor caso, no encuentra candidato y devuelve no-op.
+- Y como consecuencia: **las entradas interiores no deben estar sembradas**. Si
+  `0x825A73F8` esta en la tabla, la llamada resuelve al cuerpo mal compilado y el
+  detector no llega a ejecutarse nunca. Por eso se quitaron y se sembraron los
+  inicios reales (`0x825A73D8`, `0x821E82A8`), verificados como autocontenidos
+  (acaban en `blr` y les sigue relleno).
 
 ```
-NS3FB-ALIAS-AUTO 0x825A7AB8 -> 0x825A7A88 (contenida en una funcion: se ejecuta entera)
+NS3FB-ALIAS-AUTO 0x825A73F8 -> 0x825A73D8 (contenida en una funcion: se ejecuta entera)
 ```
 
-Este nivel es el que hace innecesario jugar para descubrir direcciones nuevas: se
-aplica a cualquier dirección que el juego genere en runtime, hoy y en el futuro.
+**A/B sin recompilar:** `Documents/alias_off.txt` desactiva el detector.
 
-**A/B sin recompilar:** `Documents/alias_off.txt` desactiva los dos niveles y
-vuelve al comportamiento anterior.
+## 5. Las direcciones conocidas
 
-Y `ci/entrypoint_seeds.txt` gana **32 semillas**: los inicios de las funciones de
-la tabla curada. Sin ellas, la redirección del nivel 1 caería en el trap.
-
-## 5. La tabla completa (42 entradas)
-
-| Entrada | Función que la contiene | Desfase | Registros que usa sin poner |
-|---|---|---|---|
-| `0x821E82C8` | `0x821E82A8` | +0x20 | esta sesion: constructor de ccAdvMobObj |
-| `0x82261C68` | `0x82261BA0` | +0xC8 | r1,r29,r31 |
-| `0x82261C78` | `0x82261BA0` | +0xD8 | r1,r29,r31 |
-| `0x82261C98` | `0x82261BA0` | +0xF8 | r1,r29,r31 |
-| `0x82261CA8` | `0x82261BA0` | +0x108 | r1 |
-| `0x82264BD0` | `0x82264BB8` | +0x18 | r1,r31 |
-| `0x82264BE0` | `0x82264BB8` | +0x28 | r1,r31 |
-| `0x8226C750` | `0x8226C748` | +0x8 | r1 |
-| `0x8226C790` | `0x8226C748` | +0x48 | r1 |
-| `0x82272648` | `0x822725F0` | +0x58 | r1,r31 |
-| `0x82272CF8` | `0x82272CD0` | +0x28 | r1,r30,r31 |
-| `0x82296CB0` | `0x82296C68` | +0x48 | r1,r30,r31 |
-| `0x8239B2D8` | `0x8239B2A8` | +0x30 | r1 |
-| `0x82526C88` | `0x82526C10` | +0x78 | r1,r31 |
-| `0x82575E68` | `0x82575D68` | +0x100 | r1,r29,r30,r31 |
-| `0x82575F78` | `0x82575D68` | +0x210 | r1,r28,r29,r30,r31 |
-| `0x825A7258` | `0x825A7218` | +0x40 | r1,r31 |
-| `0x825A7278` | `0x825A7218` | +0x60 | r1,r31 |
-| `0x825A72F8` | `0x825A72E8` | +0x10 | r1 |
-| `0x825A7308` | `0x825A72E8` | +0x20 | r1 |
-| `0x825A7348` | `0x825A72E8` | +0x60 | r1 |
-| `0x825A73A8` | `0x825A7380` | +0x28 | r1,r31 |
-| `0x825A73F8` | `0x825A73D8` | +0x20 | esta sesion: comprobacion de accion (vtbl+0x42C) |
-| `0x825E3278` | `0x825E30D0` | +0x1A8 | r1,r28,r29,r30,r31 |
-| `0x825EBAC8` | `0x825EB770` | +0x358 | r1,r28,r31 |
-| `0x826057F8` | `0x82605478` | +0x380 | r1,r28,r30 |
-| `0x8262C590` | `0x8262C528` | +0x68 | r1,r31 |
-| `0x8269D310` | `0x8269D1E0` | +0x130 | r1 |
-| `0x8269ECF8` | `0x8269E8F0` | +0x408 | r1,r28,r31 |
-| `0x826E4C20` | `0x826E4BE0` | +0x40 | r1 |
-| `0x826EC2E8` | `0x826EC220` | +0xC8 | r1,r31 |
-| `0x82723138` | `0x82723078` | +0xC0 | r1,r31 |
-| `0x82768360` | `0x82768268` | +0xF8 | r1,r30 |
-| `0x8276D788` | `0x8276CA78` | +0xD10 | r1 |
-| `0x8276F2A0` | `0x8276F268` | +0x38 | r1 |
-| `0x827D9BA8` | `0x827D9B18` | +0x90 | r1,r29,r30,r31 |
-| `0x827DD430` | `0x827DD370` | +0xC0 | r1 |
-| `0x828401F0` | `0x828401E8` | +0x8 | r1 |
-| `0x82840208` | `0x828401E8` | +0x20 | r1 |
-| `0x828628F8` | `0x828628B8` | +0x40 | r1,r30,r31 |
-| `0x82868BA0` | `0x82868B78` | +0x28 | r1,r31 |
-| `0x828DE618` | `0x828DE598` | +0x80 | r1,r31 |
-
-Las 5 interiores **no** redirigidas por ser hojas sin marco de pila:
-`0x827D92A8`, `0x828401D8`, `0x828401A8`, `0x828401C0`, `0x8276EB48`.
+Ya no hay tabla: el detector las resuelve. Las verificadas contra el `.text` real
+son las de la §8. Las que la tabla curada tenia mal (`0x82261C68`, `0x82575E68`,
+`0x825E3278`, `0x825EBAC8`, `0x826057F8`, `0x8269D310`, `0x8269ECF8`, `0x82768360`,
+`0x8276D788`, `0x827D9BA8`, `0x827DD430`, `0x828DE618`, y las cuatro `0x82261Cxx`)
+se dejan al detector, que las calcula con la comprobacion de contencion.
 
 ## 6. Riesgo asumido
 
