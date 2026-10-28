@@ -54,8 +54,8 @@ rexglue-guest-state.patch
 # que no lleva bias, se ve perfecto. Es el mismo arreglo que ya tiene Xenia
 # Canary; el upstream lo cerro como "not planned" (issue #456).
 rexglue-tfetch-expadjust.patch
-# Diagnostico de ENTRADA y de frames del invitado, apagado por defecto.
-# Se activa creando Documents/input_trace.txt; sin ese marcador no escribe nada.
+# Diagnostico de ENTRADA y de frames del invitado, ENCENDIDO por defecto.
+# No hay que crear nada. Para silenciarlo: Documents/input_trace_off.txt.
 #
 #   NS3FB-INPUT keydown vk=0x5801 flags=0x0001   evento de flanco que llega
 #   NS3FB-INPUT state 0x0000 -> 0x1000           el boton se ve solo por estado
