@@ -3,16 +3,19 @@
 Diagnóstico para el bug del **combo de mob battle**: aparece el botón en pantalla
 (`B`), se pulsa y no avanza.
 
-## Activar
+## No hay que crear nada
 
-Crear un fichero **vacío** en la app Archivos:
+La traza viene **encendida por defecto**: el IPA escribe estas líneas sin que toques
+nada. El volumen es de 2-3 líneas por segundo, así que no ensucia el log.
+
+Si algún día quieres silenciarla, crea un fichero **vacío**:
 
 ```
-Documents/input_trace.txt
+Documents/input_trace_off.txt
 ```
 
-Sin ese marcador los dos parches no escriben **nada**. Se puede quitar en caliente
-(se comprueba una vez por proceso: para desactivar, cerrar y abrir el juego).
+Se comprueba una vez por proceso: para que surta efecto, cierra y vuelve a abrir el
+juego. Borrar el fichero la vuelve a encender.
 
 ## Qué escribe
 
