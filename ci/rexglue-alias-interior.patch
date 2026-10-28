@@ -11,7 +11,7 @@
  namespace rex::runtime {
  
  namespace {
-@@ -37,12 +41,94 @@
+@@ -37,12 +41,96 @@
  
  }  // namespace
  
@@ -47,8 +47,8 @@
 +  return disabled;
 +}
 +
-+/// Busca hacia atras el primer inicio de funcion REAL que este compilado.
-+/// Devuelve 0 si no encuentra ninguno. `probes` cuenta los candidatos con pinta
++/// Devuelve el inicio de funcion MAS CERCANO por detras de `addr`, y solo si
++/// esta compilado. Si no lo esta, 0 — no se adivina con funciones mas antiguas. `probes` cuenta los candidatos con pinta
 +/// de prologo que se probaron, para el diagnostico.
 +static uint32_t Ns3fbFindCompiledContainer(const uint8_t* base, uint32_t addr,
 +                                           FunctionDispatcher* dispatcher,
@@ -90,9 +90,11 @@
 +    if (last_candidate) {
 +      *last_candidate = candidate;
 +    }
-+    if (dispatcher->GetFunction(candidate)) {
-+      return candidate;
-+    }
++    // SOLO la candidata mas cercana. Si no esta compilada, se devuelve 0: seguir
++    // hacia atras termina llamando a una funcion que no tiene nada que ver con
++    // esta direccion, con su mismo `this`, y el invitado lee basura y muere
++    // (log 2026-10-28 02:04:35: 0x821E82C8 -> 0x821E8118 -> read of guest 0x4).
++    return dispatcher->GetFunction(candidate) ? candidate : 0;
 +  }
 +  return 0;
 +}
@@ -107,12 +109,13 @@
    static std::mutex trap_mutex;
    static std::unordered_map<uint32_t, uint64_t> trap_calls;
    const uint32_t trap_target = ctx.last_indirect_target;
-@@ -51,6 +137,31 @@
+@@ -51,6 +139,31 @@
      std::lock_guard<std::mutex> trap_lock(trap_mutex);
      trap_count = ++trap_calls[trap_target];
    }
 +
-+  // Antes de darla por perdida: ejecutar la funcion que la contiene.
++  // Antes de darla por perdida: ejecutar la funcion que la contiene, si esta
++  // compilada. Si no, no-op (nunca otra funcion).
 +  if (!Ns3fbAliasDisabled()) {
 +    FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
 +    uint32_t probes = 0;
@@ -123,17 +126,16 @@
 +      if (PPCFunc* target = dispatcher->GetFunction(container)) {
 +        if (trap_count == 1) {
 +          REXLOG_WARN(
-+              "NS3FB-ALIAS-AUTO 0x{:08X} -> 0x{:08X} ({} candidatas, compilada: se ejecuta entera)",
-+              trap_target, container, probes);
++              "NS3FB-ALIAS-AUTO 0x{:08X} -> 0x{:08X} (contenedora mas cercana, compilada)",
++              trap_target, container);
 +        }
 +        target(ctx, base);
 +        return;
 +      }
 +    } else if (trap_count == 1) {
 +      REXLOG_WARN(
-+          "NS3FB-ALIAS-MISS 0x{:08X} ({} candidatas, ultima 0x{:08X}, ninguna compilada) base={} disp={}",
-+          trap_target, probes, last_candidate, base ? "ok" : "null",
-+          dispatcher ? "ok" : "null");
++          "NS3FB-ALIAS-MISS 0x{:08X} (candidata mas cercana 0x{:08X} {}compilada): no-op",
++          trap_target, last_candidate, probes ? "" : "no-");
 +    }
 +  }
    // La primera llamada identifica la direccion; despues, una de cada 600 deja
