@@ -13,7 +13,7 @@
  #include <rex/input/input.h>
  #include <rex/input/input_system.h>
  #include <rex/kernel/xam/private.h>
-@@ -38,6 +44,130 @@
+@@ -38,6 +44,133 @@
    return static_cast<rex::input::InputSystem*>(REX_KERNEL_STATE()->emulator()->input_system());
  }
  
@@ -41,14 +41,17 @@
 +constexpr uint16_t kNs3fbKeyUp = 0x0002;
 +constexpr uint16_t kNs3fbRepeat = 0x0004;
 +
++/// ENCENDIDA por defecto: no hace falta crear nada. Si aparece
++/// Documents/input_trace_off.txt, se calla. El volumen es de 2-3 lineas por
++/// segundo, asi que no ensucia el log de una partida normal.
 +bool Ns3fbInputTraceEnabled() {
 +  static const bool enabled = [] {
 +    const char* home = std::getenv("HOME");
 +    if (!home || !*home) {
-+      return false;
++      return true;
 +    }
-+    std::ifstream marker(std::string(home) + "/Documents/input_trace.txt");
-+    return marker.good();
++    std::ifstream off_marker(std::string(home) + "/Documents/input_trace_off.txt");
++    return !off_marker.good();
 +  }();
 +  return enabled;
 +}
@@ -144,7 +147,7 @@
  void XamResetInactivity_entry() {
    // Do we need to do anything?
  }
-@@ -112,7 +242,12 @@
+@@ -112,7 +245,12 @@
    }
  
    auto* is = input_system();
@@ -158,7 +161,7 @@
  }
  
  // https://msdn.microsoft.com/en-us/library/windows/desktop/microsoft.directx_sdk.reference.xinputsetstate(v=vs.85).aspx
-@@ -154,7 +289,12 @@
+@@ -154,7 +292,12 @@
    }
  
    auto* is = input_system();
@@ -172,7 +175,7 @@
  }
  
  // Same as non-ex, just takes a pointer to user index.
-@@ -179,7 +319,9 @@
+@@ -179,7 +322,9 @@
    auto result = is->GetKeystroke(user_index, flags, keystroke);
    if (XSUCCEEDED(result)) {
      *user_index_ptr = keystroke->user_index;
