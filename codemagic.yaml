@@ -98,6 +98,15 @@ workflows:
         script: |
           ./scripts/01-codegen.sh
 
+      # Si el codegen aborta por una rama sin funcion (UnresolvedCall), este paso
+      # saca las direcciones que faltan ya formateadas. ignore_failure para que un
+      # fallo del codegen no impida ver el diagnostico.
+      - name: Semillas pendientes (si el codegen fallo)
+        ignore_failure: true
+        script: |
+          chmod +x scripts/seeds-pending.sh
+          ./scripts/seeds-pending.sh || true
+
       - name: Build app
         script: |
           # Sin --preset: rexglue init reescribe CMakePresets.json sin el preset
