@@ -70,30 +70,44 @@ Es decir: **40 call sites llevan desde el 2026-10-22 ejecutando cuerpos que no
 son funciones completas**, cada uno con su corrupción silenciosa. No es un bug;
 es una clase de bug.
 
-## 4. El arreglo
+## 4. El arreglo: dos niveles
 
-`ci/rexglue-alias-interior.patch` añade, en `src/system/function_dispatcher.cpp`,
-una tabla que mapea cada entrada interior a la **función que la contiene** (localizada
-hacia atrás por el patrón de prólogo y validando el terminador anterior). La
-redirección se aplica en `ResolveIndirectFunction`, **antes** de buscar en la
-tabla de funciones, así que el cuerpo mal compilado no se ejecuta nunca y se
-ejecuta la función completa, con su prólogo y su epílogo.
+`ci/rexglue-alias-interior.patch` actúa en `src/system/function_dispatcher.cpp` con
+dos mecanismos, del más determinista al más general:
 
-Cada entrada avisa una vez en el log:
+### Nivel 1 — tabla curada
+
+Mapa de las 42 entradas ya identificadas a la función que las contiene. Se aplica
+en `ResolveIndirectFunction`, **antes** de buscar en la tabla de funciones, así que
+el cuerpo mal compilado no se ejecuta nunca. Coste cero, comportamiento fijo.
 
 ```
 NS3FB-ALIAS 0x825A73F8 -> 0x825A73D8 (entrada interior: se ejecuta la funcion completa)
 ```
 
-Eso permite correlacionar qué entrada se usa con cada síntoma, sin recompilar.
+### Nivel 2 — detección en runtime
 
-**A/B sin recompilar:** crear `Documents/alias_off.txt` desactiva la redirección
-y vuelve al comportamiento anterior. Útil si alguna redirección resulta ser una
-corrutina reanudada (ver «Riesgo» abajo).
+Cuando una llamada **cae en el trap** (nadie la resolvió), antes de devolver el
+no-op se busca hacia atrás el inicio de la función que contiene la dirección y se
+ejecuta entera. El escaneo exige tres cosas para no redirigir a tontas:
 
-Y `ci/entrypoint_seeds.txt` gana **32 semillas**: los inicios de esas funciones.
-Sin ellas, la redirección caería en el trap y volvería a no-op, que es justo lo
-que hay que evitar.
+1. patrón de prólogo (`mflr r12` + `stw r12,-8(r1)`, o `stwu r1,-N(r1)`),
+2. que la instrucción anterior sea un terminador (`blr`/`b`/`bctr`/relleno),
+3. que la función encontrada **contenga** la dirección (su primer `blr` no puede
+   quedar antes).
+
+```
+NS3FB-ALIAS-AUTO 0x825A7AB8 -> 0x825A7A88 (contenida en una funcion: se ejecuta entera)
+```
+
+Este nivel es el que hace innecesario jugar para descubrir direcciones nuevas: se
+aplica a cualquier dirección que el juego genere en runtime, hoy y en el futuro.
+
+**A/B sin recompilar:** `Documents/alias_off.txt` desactiva los dos niveles y
+vuelve al comportamiento anterior.
+
+Y `ci/entrypoint_seeds.txt` gana **32 semillas**: los inicios de las funciones de
+la tabla curada. Sin ellas, la redirección del nivel 1 caería en el trap.
 
 ## 5. La tabla completa (42 entradas)
 
@@ -162,3 +176,62 @@ ejecutarse, la redirección sería incorrecta. Contra eso:
 1. Punto de interacción del modo historia → **la A debe responder**.
 2. En el log deben aparecer líneas `NS3FB-ALIAS` (y **ninguna** `NS3FB-TRAP`).
 3. Si algo se rompe, duplicar `alias_off.txt` en `Documents/` y comparar.
+
+## 8. ¿Se puede hacer sin entrar al juego?
+
+Sí, y la respuesta corta es que **la cosecha manual ya no hace falta**. Tres números:
+
+### Lo que sí se extrae del `.xex`
+
+`tools/xex/harvest_interior.py` (nuevo) recorre la imagen, busca rachas de punteros
+a `.text` en las tablas de datos y clasifica cada uno. Resultado en este ejecutable:
+
+| Clasificación | N |
+|---|---|
+| Inicios de función | 13.857 |
+| Thunks de vtable | 9 |
+| **Entradas interiores con función contenedora** | **5.373** |
+
+Cinco mil trescientas setenta y tres. **Es imposible validarlas jugando**, y por eso
+la solución no puede ser una tabla a mano: tiene que resolverlo el runtime (nivel 2).
+
+### Lo que NO se extrae del `.xex`
+
+La familia de callbacks `0x825A7xxx` — la que costó semanas de sesiones — **no está
+en la imagen como datos**. Comprobado: de 27 direcciones que el dispositivo reveló a
+lo largo del proyecto, el escaneo estático encuentra **1**. Las demás las construye
+el juego en runtime, así que ningún escaneo del `.xex` las va a ver nunca. Tampoco
+hace falta: el detector las resuelve cuando aparecen.
+
+### Validación del detector
+
+Probado contra el `.text` real del ejecutable, con los 8 casos que el dispositivo
+había descubierto y 5 inicios de función que no deben moverse:
+
+```
+OK  0x825A73F8 -> 0x825A73D8   comprobacion de accion (la A)
+OK  0x821E82C8 -> 0x821E82A8   constructor de ccAdvMobObj
+OK  0x825A7378 -> 0x825A72E8   blr final
+OK  0x825A73A8 -> 0x825A7380   sesion larga 02:42
+OK  0x82272CF8 -> 0x82272CD0   sesion larga 02:40
+OK  0x8262C590 -> 0x8262C528   trampolin de retorno
+OK  0x825A7308 -> 0x825A72E8   evento de combate
+OK  0x82264BE0 -> 0x82264BB8   inicio del jutsu definitivo
+
+inicios de funcion: 0x825A73D8, 0x821E82A8, 0x825A72E8, 0x821B0000, 0x825A7438
+  -> todos sin tocar
+```
+
+8/8 aciertos y 5/5 sin falsos positivos. Y el código compila con `-Wall -Wextra`
+con los mismos tipos que el SDK (`PPCFunc` como tipo función).
+
+### El flujo nuevo
+
+```
+python3 tools/xex/unxex.py ci/game/default.xex /tmp/image.bin
+python3 tools/xex/harvest_interior.py /tmp/image.bin      # auditoria, sin dispositivo
+python3 tools/xex/harvest_interior.py /tmp/image.bin --cpp  # tabla para el parche
+```
+
+Para las direcciones nuevas: **no hay que hacer nada**. Sale `NS3FB-ALIAS-AUTO` en
+el log y sigue. Solo se mira el log si algo se comporta raro.
