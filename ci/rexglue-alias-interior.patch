@@ -11,15 +11,16 @@
  namespace rex::runtime {
  
  namespace {
-@@ -60,12 +64,112 @@
-   }
- }
+@@ -37,12 +41,162 @@
+ 
+ }  // namespace
  
 +
-+// NS3FB: entradas INTERIORES del invitado.
++// ---------------------------------------------------------------------------
++// NS3FB: entradas INTERIORES.
 +//
-+// El juego llama por puntero a direcciones que caen DENTRO de una funcion, no en
-+// su inicio: son colas compartidas (logica final + epilogo). Sembrarlas en
++// El juego llama por puntero a direcciones que caen DENTRO de una funcion, no
++// en su inicio: son colas compartidas (logica final + epilogo). Sembrarlas en
 +// entrypoint_seeds.txt hace que el codegen compile el cuerpo DESDE ahi, y ese
 +// cuerpo desapila un frame que nunca apilo y vuelve con la direccion de retorno
 +// de otra pila. No revienta: devuelve un valor arbitrario y deja el estado mal.
@@ -27,14 +28,18 @@
 +// Sintoma tipico: el juego va bien, el personaje se anima, la musica sigue, y
 +// una accion concreta no hace nada porque su comprobacion devuelve 0.
 +//
-+// La tabla mapea cada entrada interior a la funcion que la contiene, localizada
-+// hacia atras por el patron de prologo (mflr r12 / stw r12,-8(r1) / std r31 /
-+// stwu r1,-N(r1)) y comprobando que la instruccion anterior es un terminador.
-+// Se aplica ANTES de buscar en la tabla de funciones: el cuerpo mal compilado
-+// no se ejecuta nunca.
++// Dos niveles de arreglo:
 +//
-+// A/B sin recompilar: crear Documents/alias_off.txt desactiva la redireccion.
-+// Cada entrada avisa una vez en el log para poder correlacionar sintomas.
++//   1. Tabla curada: las entradas ya identificadas, con su funcion. Determinista
++//      y sin coste.
++//   2. Deteccion en runtime: para las tablas que el juego construye en runtime
++//      (la familia 0x825A7xxx), esas direcciones NO existen como datos en el
++//      .xex, asi que ningun escaneo estatico las encuentra. Cuando una llamada
++//      cae en el trap, se busca hacia atras el inicio de la funcion que la
++//      contiene y se ejecuta entera.
++//
++// A/B sin recompilar: Documents/alias_off.txt desactiva los dos niveles.
++// ---------------------------------------------------------------------------
 +static constexpr uint32_t kNs3fbInteriorAlias[][2] = {
 +    {0x821E82C8, 0x821E82A8},
 +    {0x82261C68, 0x82261BA0},
@@ -80,6 +85,8 @@
 +    {0x828DE618, 0x828DE598},
 +};
 +
++/// Desactivable en el dispositivo: Documents/alias_off.txt vuelve al
++/// comportamiento anterior sin recompilar.
 +static bool Ns3fbAliasDisabled() {
 +  static const bool disabled = [] {
 +    const char* home = std::getenv("HOME");
@@ -92,6 +99,8 @@
 +  return disabled;
 +}
 +
++/// Redirige una entrada interior conocida a la funcion que la contiene.
++/// Devuelve la misma direccion si no esta en la tabla.
 +static uint32_t Ns3fbRedirectInterior(uint32_t guest_address) {
 +  constexpr size_t kCount = sizeof(kNs3fbInteriorAlias) / sizeof(kNs3fbInteriorAlias[0]);
 +  static bool reported[kCount] = {};
@@ -113,9 +122,91 @@
 +  return guest_address;
 +}
 +
- PPCFunc* ResolveIndirectFunction(uint32_t guest_address) {
-   FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
-   if (!dispatcher) {
++// Devuelve el inicio de la funcion que contiene 'addr', o 0 si no lo encuentra.
++// Se busca hacia atras el patron de prologo de MSVC y se exige que la
++// instruccion anterior sea un terminador (fin de la funcion previa), que es lo
++// que distingue un inicio de funcion de una direccion intermedia cualquiera.
++static uint32_t Ns3fbFindContainingFunction(const uint8_t* base, uint32_t addr) {
++  if (!base || addr < 0x1000) {
++    return 0;
++  }
++  auto load = [base](uint32_t a) {
++    const uint8_t* p = base + a;
++    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | uint32_t(p[3]);
++  };
++  for (uint32_t back = 4; back <= 0x1400; back += 4) {
++    const uint32_t candidate = addr - back;
++    const uint32_t w0 = load(candidate);
++    const uint32_t w1 = load(candidate + 4);
++    const bool prologue = (w0 == 0x7D8802A6 && w1 == 0x9181FFF8) ||  // mflr r12 / stw r12,-8(r1)
++                          (w0 & 0xFFFF0000) == 0x94210000 ||          // stwu r1,-N(r1)
++                          w0 == 0x7C0802A6;                           // mflr r0
++    if (!prologue) {
++      continue;
++    }
++    const uint32_t previous = load(candidate - 4);
++    const bool boundary = previous == 0x4E800020 ||                       // blr
++                          previous == 0x4E800420 ||                       // bctr
++                          previous == 0x00000000 || previous == 0x60000000 ||  // relleno / nop
++                          (previous & 0xFC000003) == 0x48000000;          // b
++    if (!boundary) {
++      continue;
++    }
++    // La funcion encontrada tiene que CONTENER la direccion: su primer blr no
++    // puede quedar antes. Sin esto, una direccion que ya era inicio de funcion
++    // se confundiria con una intermedia y se redirigiria a la funcion anterior.
++    for (uint32_t fwd = 0; fwd <= 0x1400; fwd += 4) {
++      if (load(candidate + fwd) == 0x4E800020) {
++        return (candidate + fwd) >= addr ? candidate : 0;
++      }
++    }
++    return 0;
++  }
++  return 0;
++}
++
+ // NS3FB diagnostic build: instead of aborting on an unregistered guest
+ // function, log the address once and return as a no-op stub so the title keeps
+ // running and a single run collects every missing entrypoint in one log.
+ // Guest state is not emulated here, so the process may die later in a different
+ // way - that is expected and acceptable for address harvesting.
+-static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* /*base*/) {
++static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* base) {
+   static std::mutex trap_mutex;
+   static std::unordered_map<uint32_t, uint64_t> trap_calls;
+   const uint32_t trap_target = ctx.last_indirect_target;
+@@ -51,6 +205,30 @@
+     std::lock_guard<std::mutex> trap_lock(trap_mutex);
+     trap_count = ++trap_calls[trap_target];
+   }
++
++  // Antes de darla por perdida: si la direccion cae dentro de una funcion,
++  // ejecutar la funcion completa. Esto cubre lo que ningun escaneo estatico
++  // puede cosechar, porque la tabla se construye en runtime.
++  if (!Ns3fbAliasDisabled()) {
++    uint32_t resolved = Ns3fbRedirectInterior(trap_target);
++    if (resolved == trap_target) {
++      resolved = Ns3fbFindContainingFunction(base, trap_target);
++    }
++    if (resolved != 0 && resolved != trap_target) {
++      if (FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher()) {
++        if (PPCFunc* target = dispatcher->GetFunction(resolved)) {
++          if (trap_count == 1) {
++            REXLOG_WARN(
++                "NS3FB-ALIAS-AUTO 0x{:08X} -> 0x{:08X} (contenida en una funcion: se ejecuta entera)",
++                trap_target, resolved);
++          }
++          target(ctx, base);
++          return;
++        }
++      }
++    }
++  }
++
+   // La primera llamada identifica la direccion; despues, una de cada 600 deja
+   // su marca de tiempo en el log: eso es lo que separa un callback de un solo
+   // uso de una ruta caliente que se ejecuta en cada frame.
+@@ -66,6 +244,8 @@
      return &InvalidFunctionTrap;
    }
  
