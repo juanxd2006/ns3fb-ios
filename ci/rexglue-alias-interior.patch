@@ -11,36 +11,27 @@
  namespace rex::runtime {
  
  namespace {
-@@ -37,12 +41,96 @@
+@@ -37,12 +41,88 @@
  
  }  // namespace
  
-+
 +// ---------------------------------------------------------------------------
 +// NS3FB: entradas INTERIORES del invitado.
 +//
-+// El juego llama por puntero a direcciones que caen DENTRO de una funcion, no en
-+// su inicio: son colas compartidas (logica final + epilogo). Si el codegen
-+// compila el cuerpo DESDE ahi, ese cuerpo desapila un frame que nunca apilo y
-+// vuelve con la direccion de retorno de otra pila. No revienta: devuelve un
-+// valor arbitrario y deja el estado mal.
++// El juego llama por puntero a direcciones que caen DENTRO de una funcion. Si el
++// codegen compila desde ahi, el cuerpo desapila un frame que nunca apilo.
 +//
-+// Sintoma tipico: el juego va bien, el personaje se anima, la musica sigue, y una
-+// accion concreta no hace nada porque su comprobacion devuelve 0.
++// v3 — dos cambios sobre la v2, que fallaba EN SILENCIO (log del 2026-10-28
++// 01:01-01:07: tres direcciones saltaron como trap y cero NS3FB-ALIAS-AUTO):
 +//
-+// Aqui se resuelve SOLO en runtime, a proposito:
-+//
-+//   - No se siembran direcciones nuevas. Sembrar una direccion que no es inicio
-+//     de funcion REAL parte en dos la funcion que la contiene, y entonces los
-+//     saltos internos de esa funcion dejan de resolver: el juego muere con
-+//     "Unresolved branch". Ya paso con 0x825EB770 (ver docs/INTERIOR_ENTRIES.md).
-+//   - No hay tabla curada de direcciones -> funcion: para calcularla hacia falta
-+//     saber donde acaba cada funcion, y el "primer blr" NO sirve, porque MSVC
-+//     fusiona epilogos y un blr puede aparecer en medio. 16 de 42 entradas
-+//     salieron mal por eso.
-+//
-+// Detectar en el momento de la llamada no inventa fronteras y no puede romper el
-+// arranque: si no encuentra nada, se comporta como antes (no-op).
++//   1. El criterio ya NO es "la funcion contiene la direccion" (primer blr
++//      despues del candidato). Ese criterio es falso con MSVC, que fusiona
++//      epilogos: un blr puede estar en medio de la funcion y entonces se
++//      rechaza el candidato bueno. Ahora el criterio es duro y comprobable:
++//      el candidato tiene que ESTAR EN LA TABLA DE FUNCIONES compiladas. Si no
++//      esta, se sigue buscando hacia atras en vez de rendirse.
++//   2. Si no se redirige, se dice POR QUE (NS3FB-ALIAS-MISS) en vez de devolver
++//      no-op en silencio.
 +//
 +// A/B sin recompilar: Documents/alias_off.txt lo desactiva.
 +// ---------------------------------------------------------------------------
@@ -56,12 +47,16 @@
 +  return disabled;
 +}
 +
-+// Devuelve el inicio de la funcion que contiene 'addr', o 0 si no lo encuentra.
-+// Se busca hacia atras el patron de prologo de MSVC y se exige que la
-+// instruccion anterior sea un terminador (fin de la funcion previa), que es lo
-+// que distingue un inicio de funcion de una direccion intermedia cualquiera.
-+static uint32_t Ns3fbFindContainingFunction(const uint8_t* base, uint32_t addr) {
-+  if (!base || addr < 0x1000) {
++/// Busca hacia atras el primer inicio de funcion REAL que este compilado.
++/// Devuelve 0 si no encuentra ninguno. `probes` cuenta los candidatos con pinta
++/// de prologo que se probaron, para el diagnostico.
++static uint32_t Ns3fbFindCompiledContainer(const uint8_t* base, uint32_t addr,
++                                           FunctionDispatcher* dispatcher,
++                                           uint32_t* probes) {
++  if (probes) {
++    *probes = 0;
++  }
++  if (!base || !dispatcher || addr < 0x1000) {
 +    return 0;
 +  }
 +  auto load = [base](uint32_t a) {
@@ -73,28 +68,25 @@
 +    const uint32_t w0 = load(candidate);
 +    const uint32_t w1 = load(candidate + 4);
 +    const bool prologue = (w0 == 0x7D8802A6 && w1 == 0x9181FFF8) ||  // mflr r12 / stw r12,-8(r1)
-+                          (w0 & 0xFFFF0000) == 0x94210000 ||          // stwu r1,-N(r1)
-+                          w0 == 0x7C0802A6;                           // mflr r0
++                          (w0 & 0xFFFF0000) == 0x94210000 ||         // stwu r1,-N(r1)
++                          w0 == 0x7C0802A6;                          // mflr r0
 +    if (!prologue) {
 +      continue;
 +    }
 +    const uint32_t previous = load(candidate - 4);
-+    const bool boundary = previous == 0x4E800020 ||                       // blr
-+                          previous == 0x4E800420 ||                       // bctr
++    const bool boundary = previous == 0x4E800020 ||                           // blr
++                          previous == 0x4E800420 ||                           // bctr
 +                          previous == 0x00000000 || previous == 0x60000000 ||  // relleno / nop
-+                          (previous & 0xFC000003) == 0x48000000;          // b
++                          (previous & 0xFC000003) == 0x48000000;             // b
 +    if (!boundary) {
 +      continue;
 +    }
-+    // La funcion encontrada tiene que CONTENER la direccion: su primer blr no
-+    // puede quedar antes. Sin esto, una direccion que ya era inicio de funcion
-+    // se confundiria con una intermedia y se redirigiria a la funcion anterior.
-+    for (uint32_t fwd = 0; fwd <= 0x1400; fwd += 4) {
-+      if (load(candidate + fwd) == 0x4E800020) {
-+        return (candidate + fwd) >= addr ? candidate : 0;
-+      }
++    if (probes) {
++      ++*probes;
 +    }
-+    return 0;
++    if (dispatcher->GetFunction(candidate)) {
++      return candidate;
++    }
 +  }
 +  return 0;
 +}
@@ -109,27 +101,30 @@
    static std::mutex trap_mutex;
    static std::unordered_map<uint32_t, uint64_t> trap_calls;
    const uint32_t trap_target = ctx.last_indirect_target;
-@@ -51,6 +139,25 @@
+@@ -51,6 +131,28 @@
      std::lock_guard<std::mutex> trap_lock(trap_mutex);
      trap_count = ++trap_calls[trap_target];
    }
 +
-+  // Antes de darla por perdida: si la direccion cae dentro de una funcion
-+  // conocida, ejecutar esa funcion entera en vez de un no-op.
++  // Antes de darla por perdida: ejecutar la funcion que la contiene.
 +  if (!Ns3fbAliasDisabled()) {
-+    const uint32_t containing = Ns3fbFindContainingFunction(base, trap_target);
-+    if (containing != 0 && containing != trap_target) {
-+      if (FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher()) {
-+        if (PPCFunc* target = dispatcher->GetFunction(containing)) {
-+          if (trap_count == 1) {
-+            REXLOG_WARN(
-+                "NS3FB-ALIAS-AUTO 0x{:08X} -> 0x{:08X} (contenida en una funcion: se ejecuta entera)",
-+                trap_target, containing);
-+          }
-+          target(ctx, base);
-+          return;
++    FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
++    uint32_t probes = 0;
++    const uint32_t container =
++        Ns3fbFindCompiledContainer(base, trap_target, dispatcher, &probes);
++    if (container != 0 && container != trap_target) {
++      if (PPCFunc* target = dispatcher->GetFunction(container)) {
++        if (trap_count == 1) {
++          REXLOG_WARN(
++              "NS3FB-ALIAS-AUTO 0x{:08X} -> 0x{:08X} ({} candidatas, compilada: se ejecuta entera)",
++              trap_target, container, probes);
 +        }
++        target(ctx, base);
++        return;
 +      }
++    } else if (trap_count == 1) {
++      REXLOG_WARN("NS3FB-ALIAS-MISS 0x{:08X} ({} candidatas, ninguna compilada) base={} disp={}",
++                  trap_target, probes, base ? "ok" : "null", dispatcher ? "ok" : "null");
 +    }
 +  }
    // La primera llamada identifica la direccion; despues, una de cada 600 deja
