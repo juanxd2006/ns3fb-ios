@@ -11,7 +11,7 @@
  namespace rex::runtime {
  
  namespace {
-@@ -37,12 +41,88 @@
+@@ -37,12 +41,94 @@
  
  }  // namespace
  
@@ -52,9 +52,12 @@
 +/// de prologo que se probaron, para el diagnostico.
 +static uint32_t Ns3fbFindCompiledContainer(const uint8_t* base, uint32_t addr,
 +                                           FunctionDispatcher* dispatcher,
-+                                           uint32_t* probes) {
++                                           uint32_t* probes, uint32_t* last_candidate) {
 +  if (probes) {
 +    *probes = 0;
++  }
++  if (last_candidate) {
++    *last_candidate = 0;
 +  }
 +  if (!base || !dispatcher || addr < 0x1000) {
 +    return 0;
@@ -84,6 +87,9 @@
 +    if (probes) {
 +      ++*probes;
 +    }
++    if (last_candidate) {
++      *last_candidate = candidate;
++    }
 +    if (dispatcher->GetFunction(candidate)) {
 +      return candidate;
 +    }
@@ -101,7 +107,7 @@
    static std::mutex trap_mutex;
    static std::unordered_map<uint32_t, uint64_t> trap_calls;
    const uint32_t trap_target = ctx.last_indirect_target;
-@@ -51,6 +131,28 @@
+@@ -51,6 +137,31 @@
      std::lock_guard<std::mutex> trap_lock(trap_mutex);
      trap_count = ++trap_calls[trap_target];
    }
@@ -110,8 +116,9 @@
 +  if (!Ns3fbAliasDisabled()) {
 +    FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
 +    uint32_t probes = 0;
-+    const uint32_t container =
-+        Ns3fbFindCompiledContainer(base, trap_target, dispatcher, &probes);
++    uint32_t last_candidate = 0;
++    const uint32_t container = Ns3fbFindCompiledContainer(base, trap_target, dispatcher,
++                                                          &probes, &last_candidate);
 +    if (container != 0 && container != trap_target) {
 +      if (PPCFunc* target = dispatcher->GetFunction(container)) {
 +        if (trap_count == 1) {
@@ -123,8 +130,10 @@
 +        return;
 +      }
 +    } else if (trap_count == 1) {
-+      REXLOG_WARN("NS3FB-ALIAS-MISS 0x{:08X} ({} candidatas, ninguna compilada) base={} disp={}",
-+                  trap_target, probes, base ? "ok" : "null", dispatcher ? "ok" : "null");
++      REXLOG_WARN(
++          "NS3FB-ALIAS-MISS 0x{:08X} ({} candidatas, ultima 0x{:08X}, ninguna compilada) base={} disp={}",
++          trap_target, probes, last_candidate, base ? "ok" : "null",
++          dispatcher ? "ok" : "null");
 +    }
 +  }
    // La primera llamada identifica la direccion; despues, una de cada 600 deja
