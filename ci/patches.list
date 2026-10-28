@@ -54,6 +54,20 @@ rexglue-guest-state.patch
 # que no lleva bias, se ve perfecto. Es el mismo arreglo que ya tiene Xenia
 # Canary; el upstream lo cerro como "not planned" (issue #456).
 rexglue-tfetch-expadjust.patch
+# Diagnostico de ENTRADA y de frames del invitado, apagado por defecto.
+# Se activa creando Documents/input_trace.txt; sin ese marcador no escribe nada.
+#
+#   NS3FB-INPUT keydown vk=0x5801 flags=0x0001   evento de flanco que llega
+#   NS3FB-INPUT state 0x0000 -> 0x1000           el boton se ve solo por estado
+#   NS3FB-INPUT-FRAMES polls=../s keystrokes=../s  tasa de sondeo del invitado
+#   NS3FB-GUEST-FRAMES swaps=../s                frames pedidos por el juego
+#
+# Sirve para separar "la pulsacion no llega al invitado" de "llega y el juego la
+# descarta por tiempo" en los QTE de mob battle, donde el prompt aparece y no
+# avanza. Comparar swaps/s con los fps del HUD dice si la logica corre al doble
+# que la presentacion.
+rexglue-input-trace.patch
+rexglue-guest-frames.patch
 
 # DESACTIVADO a peticion (2026-10-28): el detector de entradas interiores queda
 # fuera del build. Su linea estaba aqui; se comenta para que no se aplique.
