@@ -196,6 +196,88 @@ ejecutarse, la redirección sería incorrecta. Contra eso:
 2. En el log deben aparecer líneas `NS3FB-ALIAS` (y **ninguna** `NS3FB-TRAP`).
 3. Si algo se rompe, duplicar `alias_off.txt` en `Documents/` y comparar.
 
+
+## 9. La causa real: setjmp / longjmp sin declarar
+
+Todo lo anterior (semillas, tabla curada, detector en runtime) trataba **síntomas**.
+La causa apareció al mirar la traza de entrada del 2026-10-28 13:55-14:02.
+
+### Lo que descartó la traza
+
+| Medición | Resultado |
+|---|---|
+| pulsaciones de B que llegan al invitado | **260**, vistas por estado (`0x2000`) |
+| `polls/s` frente a `swaps/s` | **30,0 / 30,0** — misma tasa, no hay desfase |
+| keystrokes | **0** — el juego sondea estado, no usa eventos |
+
+O sea: la entrada llega, la lógica corre a 30 fps como la presentación, y el
+combo sigue sin avanzar. No era entrada ni *framerate*.
+
+### Lo que sí señaló
+
+`0x825A72D8` empieza a llamarse **30 veces por segundo exactamente cuando
+arranca el combo**. Y esa dirección es:
+
+```asm
+0x825A72D8  ld r30, -0x18(r1)
+0x825A72DC  ld r31, -0x10(r1)
+0x825A72E0  blr
+```
+
+La cola del epílogo de la función `0x825A7218`. Lo mismo pasa con
+`0x825A7378` (un `blr` suelto) y con `0x825A73F8` (un `bctrl` a media función).
+**Ninguna es un inicio de función: todas son fragmentos de retorno.**
+
+### Por qué el juego llama a epílogos
+
+Porque `longjmp` está mal compilado. Lo dice el propio `TROUBLESHOOTING` §4:
+
+> *«longjmp se recompila como una llamada normal que retorna, el epílogo ya lo
+> omitió el compilador, y `r1` + registros callee-saved quedan corruptos.»*
+
+Y en el proyecto **`setjmp_address` y `longjmp_address` no estaban en ninguna
+parte**: ni en `app/`, ni en `scripts/`, ni en el manifiesto. El propio
+`01-codegen.sh` avisaba *«checked by hand (see README.md, Paso 3)»* y ese paso
+no existía.
+
+Eso explica por qué solo se rompe lo que va por fibras/coroutines —los combos de
+mob battle, las transiciones de capítulo, los logros que se repiten— y el juego
+libre va bien.
+
+### Las dos direcciones
+
+Buscadas en el `.xex` por la firma del CRT: guardar y restaurar los no volátiles
+con el **mismo reparto de offsets**.
+
+| Función | Dirección | Firma |
+|---|---|---|
+| `_setjmp` | **`0x828A7F20`** | `stfd f14..f31` en `0x00-0x88`, `std r13..r31` en `0x98-0x128` |
+| `longjmp` | **`0x828A81F0`** | `lfd f14..f31` en `0x00-0x88`, `ld r13..r31` en `0x98-0x128` |
+
+Las dos empiezan con un gancho global (`lis/lwz` de `0x82B6718C`), el mecanismo
+de `setjmp` del CRT de 360.
+
+> Nota de método: los tres escaneos anteriores dieron cero porque
+> `md.disasm(texto_completo, VA)` de Capstone **se detenía en el primer byte que
+> no decodificaba**. Hay que usar `md.skipdata = True`. Con eso se decodifican
+> 1,9 millones de instrucciones y las ráfagas aparecen a la primera.
+
+### Cómo queda en el build
+
+`scripts/02b-set-jumptargets.py` escribe las dos claves en `[entrypoint]` del
+manifiesto, y `01-codegen.sh` lo llama justo después de sembrar entrypoints. Es
+idempotente y verifica al final que quedaron bien escritas.
+
+```toml
+[entrypoint]
+setjmp_address  = 0x828A7F20
+longjmp_address = 0x828A81F0
+```
+
+**Verificación en el dispositivo:** si esto es la causa, los `NS3FB-TRAP` de
+`0x825A72D8`, `0x825A7378` y `0x825A73F8` **dejan de aparecer**, porque el juego
+ya no llama a fragmentos de epílogo. Y los combos deben avanzar.
+
 ## 8. ¿Se puede hacer sin entrar al juego?
 
 Sí, y la respuesta corta es que **la cosecha manual ya no hace falta**. Tres números:
