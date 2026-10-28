@@ -342,3 +342,12 @@
 # funcion que la contiene y el juego muere con "Unresolved branch".
 0x825a73d8
 0x821e82a8
+
+# 2026-10-28 02:04: se vuelve a sembrar 0x825A73F8, y SOLO esa.
+# Motivo: es la comprobacion de accion que se llama cada frame (calls=600 en 24 s).
+# Sin ella el personaje no se mueve; con ella el movimiento vuelve, que es el
+# estado jugable conocido. Su cuerpo no es perfecto, pero no crashea.
+# 0x821E82C8 (constructor de ccAdvMobObj) se deja SIN sembrar a proposito: asi
+# salta como trap y el detector escribe si su contenedora esta compilada. Esa
+# linea es el dato que falta para arreglar la A sin adivinar.
+0x825a73f8
