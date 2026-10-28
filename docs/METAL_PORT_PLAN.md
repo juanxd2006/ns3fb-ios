@@ -4,6 +4,69 @@ Documento de la rama `experiment/metal-backend`. Aquí está el **paso 1 real** 
 backend Metal nativo: no la emulación, sino la prueba de que el plugin compila, se
 carga y es seleccionable. Todo lo que sigue se apoya en esto.
 
+## 0. Estado del arte (investigado el 2026-10-28)
+
+Antes de invertir semanas, esto es lo que dicen las fuentes:
+
+### Los mantenedores de ReXGlue descartan el backend Metal, y por una razón
+
+Issue **#235 "Mac Support"** (`rexglue/rexglue-sdk`), abierta y cerrada por un
+mantenedor (Graine25), deja el soporte macOS resuelto **con MoltenVK** y pone
+explícitamente en *Out of Scope*:
+
+> *Native Metal backend: Metal 4 lacks support for a lot of features that D3D12
+> supplies for the gpu backend*
+
+Es decir: no es que nadie lo haya intentado en ReXGlue; es que quien mantiene el
+runtime que usamos considera que **Metal no da las características que la emulación
+de Xenos necesita**. Eso no invalida a XeniOS, pero sí explica por qué nadie lo ha
+hecho aquí.
+
+### Los dos backends Metal de Xenia que existen son jóvenes y con fallos de resolve
+
+- **XeniOS / Xenia-Edge** (`src/xenia/gpu/metal/`, 33.092 líneas, BSD-3).
+- **xenia-mac** (wmarti), desde enero 2026: ARM64 + Metal, autor lo describe como
+  "extremely early", muchos juegos no arrancan.
+
+De la lista de compatibilidad de xenia-mac, un fallo que nos toca de cerca:
+
+> *4E4D083D (Soul Calibur 5): **Metal backend resolve failures***
+
+Resolve es justo el punto donde este port sufre (el `TryResolveCopyDirectly` que en
+Vulkan es un stub). Empezar por ahí con un backend cuyo resolve ya falla en otros
+títulos es empezar por el sitio más frágil.
+
+### El camino de shaders exige un componente propietario de Apple
+
+El backend Metal **no** traduce microcódigo Xenos a MSL directamente. La cadena es:
+
+```
+ucode Xenos -> DXBC -> DXIL -> Metal IR (Apple Metal Shader Converter) -> MTLLibrary
+```
+
+`libmetalirconverter.dylib` es de Apple, y su EULA permite distribuirlo
+**"solely for shader conversion"** y solo en hardware Apple. Es una dependencia más
+que viajaría dentro del `.ipa`, con su licencia.
+
+Y el autor de xenia-mac dice de esa ruta, que eligió por ser la más fácil, que trae
+**"a big performance penalty"**. O sea: el backend nativo no garantiza ser más rápido
+en el trabajo de shaders; la ganancia tendría que venir de tile memory y barreras,
+no del sombreado.
+
+## 0.1 Veredicto
+
+Con esto sobre la mesa, el orden correcto **no** es empezar el backend:
+
+1. **El andamio ya está hecho** (§1). Vale como documentación y como prueba de que
+   el enganche existe. Está OFF.
+2. **Antes de escribir emulación, medir la hipótesis gratis**: instalar **XeniOS**
+   (que ya lleva Metal nativo) y ver Storm 3 en el mismo iPhone. Si ahí va peor que
+   este port, el backend Metal no tiene caso y te has ahorrado meses. Si va mejor,
+   hay una razón medida para seguir.
+3. **Y el banco de 720p** sigue siendo la puerta dura: solo el fill + blit + vertex
+   ya son 34,19 ms en un A13, por encima de los 33,33 ms de 30 fps. Ningún backend
+   arregla eso.
+
 ## 1. Lo que ya está hecho (y lo que no)
 
 `ci/rexglue-metal-scaffold.patch` añade al SDK:
