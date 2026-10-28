@@ -11,7 +11,7 @@
  #include <string>
  
  #include <rex/cvar.h>
-@@ -437,6 +441,69 @@
+@@ -437,6 +441,70 @@
    return 0;
  }
  
@@ -26,14 +26,15 @@
 +// ---------------------------------------------------------------------------
 +namespace {
 +
++/// ENCENDIDO por defecto. Se calla con Documents/input_trace_off.txt.
 +bool Ns3fbFrameTraceEnabled() {
 +  static const bool enabled = [] {
 +    const char* home = std::getenv("HOME");
 +    if (!home || !*home) {
-+      return false;
++      return true;
 +    }
-+    std::ifstream marker(std::string(home) + "/Documents/input_trace.txt");
-+    return marker.good();
++    std::ifstream off_marker(std::string(home) + "/Documents/input_trace_off.txt");
++    return !off_marker.good();
 +  }();
 +  return enabled;
 +}
@@ -81,7 +82,7 @@
  void VdSwap_entry(mapped_void buffer_ptr,      // ptr into primary ringbuffer
                    mapped_void fetch_ptr,       // frontbuffer Direct3D 9 texture header fetch
                    mapped_void unk2,            // system writeback ptr
-@@ -445,6 +512,8 @@
+@@ -445,6 +513,8 @@
                    mapped_u32 frontbuffer_ptr,  // ptr to frontbuffer address
                    mapped_u32 texture_format_ptr, mapped_u32 color_space_ptr, mapped_u32 width,
                    mapped_u32 height) {
