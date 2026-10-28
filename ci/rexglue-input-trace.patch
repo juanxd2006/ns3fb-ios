@@ -1,0 +1,184 @@
+--- a/src/kernel/xam/xam_input.cpp
++++ b/src/kernel/xam/xam_input.cpp
+@@ -9,6 +9,12 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <chrono>
++#include <cstdlib>
++#include <fstream>
++#include <mutex>
++#include <string>
++
+ #include <rex/input/input.h>
+ #include <rex/input/input_system.h>
+ #include <rex/kernel/xam/private.h>
+@@ -38,6 +44,130 @@
+   return static_cast<rex::input::InputSystem*>(REX_KERNEL_STATE()->emulator()->input_system());
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// NS3FB: traza de entrada. Se activa creando Documents/input_trace.txt.
++//
++// Escribe en el log:
++//   NS3FB-INPUT keydown vk=0x5801 flags=0x0001   <-- evento de flanco que llega
++//   NS3FB-INPUT state 0x0000 -> 0x1000           <-- el boton se ve por estado
++//   NS3FB-INPUT-FRAMES polls=.. keystrokes=../s
++//
++// Para que sirve: un QTE (combo de mob battle) se resuelve con eventos de flanco
++// y una ventana corta. Si al pulsar no aparece ningun NS3FB-INPUT, la pulsacion
++// no llega al invitado. Si aparece pero el combo no avanza, llega y el problema
++// es la ventana de tiempo. Y si polls/s se parece al HUD, la logica va a la
++// misma tasa que la presentacion; si es el doble, la logica corre al doble y la
++// ventana del QTE se queda en la mitad.
++//
++// Constantes de XInput, escritas a mano para no depender de que el header las
++// exporte con ese nombre: KEYDOWN 0x0001, KEYUP 0x0002, REPEAT 0x0004.
++namespace {
++
++constexpr uint16_t kNs3fbKeyDown = 0x0001;
++constexpr uint16_t kNs3fbKeyUp = 0x0002;
++constexpr uint16_t kNs3fbRepeat = 0x0004;
++
++bool Ns3fbInputTraceEnabled() {
++  static const bool enabled = [] {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) {
++      return false;
++    }
++    std::ifstream marker(std::string(home) + "/Documents/input_trace.txt");
++    return marker.good();
++  }();
++  return enabled;
++}
++
++struct Ns3fbInputTraceState {
++  std::mutex mutex;
++  uint64_t keydowns = 0;
++  uint32_t last_buttons = 0;
++  uint64_t window_polls = 0;
++  uint64_t window_keystrokes = 0;
++  std::chrono::steady_clock::time_point window_start = std::chrono::steady_clock::now();
++};
++
++Ns3fbInputTraceState& Ns3fbTrace() {
++  static Ns3fbInputTraceState trace;
++  return trace;
++}
++
++void Ns3fbTracePoll(uint32_t buttons) {
++  if (!Ns3fbInputTraceEnabled()) {
++    return;
++  }
++  auto& t = Ns3fbTrace();
++  bool changed = false;
++  uint32_t previous = 0;
++  {
++    std::lock_guard<std::mutex> lock(t.mutex);
++    ++t.window_polls;
++    if (buttons != t.last_buttons) {
++      previous = t.last_buttons;
++      t.last_buttons = buttons;
++      changed = true;
++    }
++  }
++  if (changed) {
++    REXLOG_INFO("NS3FB-INPUT state 0x{:04X} -> 0x{:04X} (visto por estado, sin keystroke)", previous,
++                buttons);
++  }
++}
++
++void Ns3fbTraceKeystroke(uint16_t virtual_key, uint16_t flags) {
++  if (!Ns3fbInputTraceEnabled()) {
++    return;
++  }
++  auto& t = Ns3fbTrace();
++  {
++    std::lock_guard<std::mutex> lock(t.mutex);
++    ++t.window_keystrokes;
++    if (flags & kNs3fbKeyDown) {
++      ++t.keydowns;
++    }
++  }
++  const char* kind = "keydown";
++  if (flags & kNs3fbKeyUp) {
++    kind = "keyup";
++  } else if (flags & kNs3fbRepeat) {
++    kind = "repeat";
++  }
++  REXLOG_INFO("NS3FB-INPUT {} vk=0x{:04X} flags=0x{:04X}", kind, virtual_key, flags);
++}
++
++void Ns3fbTraceReport() {
++  if (!Ns3fbInputTraceEnabled()) {
++    return;
++  }
++  auto& t = Ns3fbTrace();
++  uint64_t polls = 0;
++  uint64_t keystrokes = 0;
++  uint64_t keydowns = 0;
++  uint32_t buttons = 0;
++  double seconds = 0.0;
++  {
++    std::lock_guard<std::mutex> lock(t.mutex);
++    const auto now = std::chrono::steady_clock::now();
++    seconds = std::chrono::duration<double>(now - t.window_start).count();
++    if (seconds < 2.0) {
++      return;
++    }
++    polls = t.window_polls;
++    keystrokes = t.window_keystrokes;
++    keydowns = t.keydowns;
++    buttons = t.last_buttons;
++    t.window_polls = 0;
++    t.window_keystrokes = 0;
++    t.window_start = now;
++  }
++  REXLOG_INFO("NS3FB-INPUT-FRAMES polls={:.1f}/s keystrokes={:.1f}/s keydowns_total={} buttons=0x{:04X}",
++              double(polls) / seconds, double(keystrokes) / seconds, keydowns, buttons);
++}
++
++}  // namespace
++
+ void XamResetInactivity_entry() {
+   // Do we need to do anything?
+ }
+@@ -112,7 +242,12 @@
+   }
+ 
+   auto* is = input_system();
+-  return is->GetState(actual_user_index, input_state);
++  auto result = is->GetState(actual_user_index, input_state);
++  if (input_state && result == X_ERROR_SUCCESS) {
++    Ns3fbTracePoll(uint32_t(input_state->gamepad.buttons));
++    Ns3fbTraceReport();
++  }
++  return result;
+ }
+ 
+ // https://msdn.microsoft.com/en-us/library/windows/desktop/microsoft.directx_sdk.reference.xinputsetstate(v=vs.85).aspx
+@@ -154,7 +289,12 @@
+   }
+ 
+   auto* is = input_system();
+-  return is->GetKeystroke(actual_user_index, flags, keystroke);
++  auto result = is->GetKeystroke(actual_user_index, flags, keystroke);
++  if (result == X_ERROR_SUCCESS) {
++    Ns3fbTraceKeystroke(uint16_t(keystroke->virtual_key), uint16_t(keystroke->flags));
++  }
++  Ns3fbTraceReport();
++  return result;
+ }
+ 
+ // Same as non-ex, just takes a pointer to user index.
+@@ -179,7 +319,9 @@
+   auto result = is->GetKeystroke(user_index, flags, keystroke);
+   if (XSUCCEEDED(result)) {
+     *user_index_ptr = keystroke->user_index;
++    Ns3fbTraceKeystroke(uint16_t(keystroke->virtual_key), uint16_t(keystroke->flags));
+   }
++  Ns3fbTraceReport();
+   return result;
+ }
+ 
