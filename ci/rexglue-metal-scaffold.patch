@@ -1,0 +1,207 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -42,8 +42,17 @@
+     option(REXGLUE_USE_VULKAN "Enable Vulkan graphics backend" ON)
+ endif()
+ 
+-if(NOT REXGLUE_USE_D3D12 AND NOT REXGLUE_USE_VULKAN)
+-    message(FATAL_ERROR "At least one graphics backend must be enabled (REXGLUE_USE_D3D12 or REXGLUE_USE_VULKAN)")
++# Metal: solo Apple, opt-in. Por defecto OFF para no tocar los builds que hoy
++# funcionan. Al activarlo, el plugin gana un backend mas (ver
++# src/graphics/metal/) y la app puede pedirlo con backend = "metal".
++option(REXGLUE_USE_METAL "Enable native Metal graphics backend (Apple, experimental)" OFF)
++
++if(NOT REXGLUE_USE_D3D12 AND NOT REXGLUE_USE_VULKAN AND NOT REXGLUE_USE_METAL)
++    message(FATAL_ERROR "At least one graphics backend must be enabled (REXGLUE_USE_D3D12, REXGLUE_USE_VULKAN or REXGLUE_USE_METAL)")
++endif()
++
++if(REXGLUE_USE_METAL AND NOT APPLE)
++    message(FATAL_ERROR "REXGLUE_USE_METAL requires an Apple platform (Metal only exists there)")
+ endif()
+ 
+ if (REXGLUE_ENABLE_FIDELITYFX AND
+@@ -279,7 +288,7 @@
+ message(STATUS "  Configurations: ${CMAKE_CONFIGURATION_TYPES}")
+ message(STATUS "  Output Dir: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+ message(STATUS "  C++ Standard: C++${CMAKE_CXX_STANDARD}")
+-message(STATUS "  Graphics: D3D12=${REXGLUE_USE_D3D12} Vulkan=${REXGLUE_USE_VULKAN}")
++message(STATUS "  Graphics: D3D12=${REXGLUE_USE_D3D12} Vulkan=${REXGLUE_USE_VULKAN} Metal=${REXGLUE_USE_METAL}")
+ message(STATUS "  FidelityFX: ${REXGLUE_ENABLE_FIDELITYFX}")
+ message(STATUS "  Tracy: ${REXGLUE_ENABLE_TRACY}")
+ message(STATUS "  Perf Counters: ${REXGLUE_ENABLE_PERF_COUNTERS}")
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -89,6 +89,15 @@
+     list(APPEND REXGPU_XENOS_SOURCES ${REXGPU_XENOS_SPIRV_SOURCES} ${REXGPU_XENOS_VULKAN_SOURCES})
+ endif()
+ 
++# Backend Metal nativo (Apple, opt-in). Esqueleto: ver
++# src/graphics/metal/graphics_system.mm y docs/METAL_PORT_PLAN.md.
++set(REXGPU_XENOS_METAL_SOURCES
++    metal/graphics_system.mm
++)
++if(REXGLUE_USE_METAL)
++    list(APPEND REXGPU_XENOS_SOURCES ${REXGPU_XENOS_METAL_SOURCES})
++endif()
++
+ if(REXGLUE_USE_D3D12)
+     list(APPEND REXGPU_XENOS_SOURCES
+         ${REXGPU_XENOS_DXBC_THIRDPARTY_SOURCES}
+@@ -158,3 +167,15 @@
+         dxguid
+     )
+ endif()
++
++if(REXGLUE_USE_METAL)
++    # El macro lo define este proyecto (el SDK no lo trae): asi el backend se
++    # puede compilar sin tocar nada mas.
++    target_compile_definitions(rexgpu-xenos PRIVATE REX_HAS_METAL=1)
++    target_link_libraries(rexgpu-xenos PRIVATE
++        "-framework Metal"
++        "-framework MetalKit"
++        "-framework QuartzCore"
++        "-framework Foundation"
++    )
++endif()
+diff --git a/src/graphics/plugin_main.cpp b/src/graphics/plugin_main.cpp
+--- a/src/graphics/plugin_main.cpp
++++ b/src/graphics/plugin_main.cpp
+@@ -19,6 +19,9 @@
+ #endif
+ #if REX_HAS_VULKAN
+ #include <rex/graphics/vulkan/graphics_system.h>
++#endif
++#if defined(REX_HAS_METAL) && REX_HAS_METAL
++#include <rex/graphics/metal/graphics_system.h>
+ #endif
+ 
+ extern "C" REX_GPU_PLUGIN_EXPORT uint32_t rex_gpu_abi_version(void) {
+@@ -48,6 +51,13 @@
+     return new rex::graphics::vulkan::VulkanGraphicsSystem();
+   }
+ #endif
++#if defined(REX_HAS_METAL) && REX_HAS_METAL
++  // IsAvailable() es false mientras el backend sea un esqueleto: no se elige
++  // con "any", pero si se puede pedir explicitamente para validar el enganche.
++  if (backend == "metal" || (backend == "any" && rex::graphics::metal::MetalGraphicsSystem::IsAvailable())) {
++    return new rex::graphics::metal::MetalGraphicsSystem();
++  }
++#endif
+   REXLOG_ERROR("rexgpu-xenos: requested backend '{}' is not compiled into this plugin", backend);
+   return nullptr;
+ }
+diff --git a/include/rex/graphics/metal/graphics_system.h b/include/rex/graphics/metal/graphics_system.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/metal/graphics_system.h
+@@ -0,0 +1,43 @@
++#pragma once
++/**
++ * ReXGlue: backend Metal nativo (en construccion).
++ *
++ * ESQUELETO. Existe para dos cosas:
++ *   1. validar que el plugin compila, se carga y es seleccionable con
++ *      gpu_plugin = "xenos" + backend = "metal" (REXGLUE_USE_METAL=ON);
++ *   2. fijar la forma que tendra el backend real, igual que el de Vulkan.
++ *
++ * Lo que falta, por orden (ver docs/METAL_PORT_PLAN.md):
++ *   - MetalProvider / MetalPresenter  (ui::GraphicsProvider / ui::Presenter)
++ *   - MetalCommandProcessor           (PM4 + estado)
++ *   - MetalTextureCache / MetalRenderTargetCache / MetalPipelineCache
++ *
++ * Referencia con la que se cuenta: src/xenia/gpu/metal/ de XeniOS y
++ * Xenia-Edge (33.092 lineas, BSD-3).
++ */
++
++#include <memory>
++#include <string>
++
++#include <rex/graphics/graphics_system.h>
++
++namespace rex::graphics::metal {
++
++class MetalGraphicsSystem : public GraphicsSystem {
++ public:
++  MetalGraphicsSystem();
++  ~MetalGraphicsSystem() override;
++
++  /// true solo si el plugin compila con backend Metal. NO implica que el
++  /// backend este implementado: hoy devuelve false para que `backend = "any"`
++  /// no lo elija por accidente.
++  static bool IsAvailable();
++
++  std::string name() const override;
++
++ protected:
++  void CreateProvider(bool with_presentation) override;
++  std::unique_ptr<CommandProcessor> CreateCommandProcessor() override;
++};
++
++}  // namespace rex::graphics::metal
+diff --git a/src/graphics/metal/graphics_system.mm b/src/graphics/metal/graphics_system.mm
+new file mode 100644
+--- /dev/null
++++ b/src/graphics/metal/graphics_system.mm
+@@ -0,0 +1,60 @@
++/**
++ * ReXGlue: backend Metal nativo (en construccion) — esqueleto.
++ *
++ * Este fichero hace, de momento, tres cosas y solo tres:
++ *   - crear el MTLDevice y decir en el log cual es (valida que el plugin tiene
++ *     acceso a Metal desde dentro de la dylib en iOS);
++ *   - devolver un nombre;
++ *   - dejar constancia de lo que falta.
++ *
++ * Objetivo del primer build: que la cadena CMake -> plugin -> fabrica ->
++ * IGraphicsSystem funcione y se lea el nombre de la GPU en el log. Nada mas.
++ * La emulacion (command processor, caches) va despues y por partes:
++ * ver docs/METAL_PORT_PLAN.md.
++ */
++
++#include <rex/graphics/metal/graphics_system.h>
++
++#include <rex/logging.h>
++
++#if defined(__APPLE__)
++#import <Metal/Metal.h>
++#endif
++
++namespace rex::graphics::metal {
++
++MetalGraphicsSystem::MetalGraphicsSystem() {
++#if defined(__APPLE__)
++  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
++  if (device) {
++    REXLOG_INFO("metal: dispositivo '{}' ({} GB de memoria recomendada)",
++                device.name.UTF8String, device.recommendedMaxWorkingSetSize >> 30);
++  } else {
++    REXLOG_ERROR("metal: MTLCreateSystemDefaultDevice devolvio null");
++  }
++#else
++  REXLOG_WARN("metal: backend compilado fuera de Apple; solo se puede enlazar");
++#endif
++}
++
++MetalGraphicsSystem::~MetalGraphicsSystem() = default;
++
++bool MetalGraphicsSystem::IsAvailable() {
++  // A proposito: el esqueleto no implementa provider ni command processor, asi
++  // que no debe poder seleccionarse con backend = "any".
++  return false;
++}
++
++std::string MetalGraphicsSystem::name() const { return "Metal"; }
++
++void MetalGraphicsSystem::CreateProvider(bool with_presentation) {
++  (void)with_presentation;
++  REXLOG_ERROR("metal: CreateProvider sin implementar (falta MetalProvider/Presenter)");
++}
++
++std::unique_ptr<CommandProcessor> MetalGraphicsSystem::CreateCommandProcessor() {
++  REXLOG_ERROR("metal: CreateCommandProcessor sin implementar (falta MetalCommandProcessor)");
++  return nullptr;
++}
++
++}  // namespace rex::graphics::metal
