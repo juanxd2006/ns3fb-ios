@@ -350,3 +350,28 @@
 # asi que 0x821E82C8 simplemente salta como trap y se ejecuta como no-op: una
 # linea en el log por sesion y el juego sigue. Eso es todo lo que hace ahora.
 0x825a73f8
+
+# --- 2026-10-28: ramas condicionales sin resolver que reporto el codegen -------
+# El propio codegen las lista al recompilar:
+#   Unresolved conditional branch to 0x82261E40 from 0x82261E74
+#   Unresolved conditional branch to 0x82261EB0 from 0x82261F60   (x7)
+#   Unresolved conditional branch to 0x82296DF0 from 0x82296EA4   (x10)
+#   Unresolved conditional branch to 0x82353E10 from 0x82353E88
+#   Unresolved conditional branch to 0x827D5CBC from 0x827D5D08
+#
+# Cuatro son codigo INTERIOR de funciones que el analizador no descubrio. Se
+# siembra el INICIO de esas funciones, no la direccion interior:
+#   0x82261E40 esta dentro de 0x82261BA0
+#   0x82296DF0 esta dentro de 0x82296C68
+#   0x82353E10 esta dentro de 0x82353D90
+#   0x827D5CBC esta dentro de 0x827D5BD8
+# Las cuatro empiezan con el prologo de siempre (mflr r12 / stw / std / stwu r1).
+#
+# La quinta, 0x82261EB0, NO se siembra: es el `mtctr r11 / bctr` de dentro del
+# thunk 0x82261EA8. Es una etiqueta compartida a la que otros puntos saltan para
+# despachar el virtual; sembrarla partiria el thunk en dos. Queda como aviso.
+0x82261ba0
+0x82296c68
+0x82353d90
+0x827d5bd8
+
