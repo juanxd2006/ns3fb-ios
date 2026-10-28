@@ -78,6 +78,12 @@ echo "    preset iOS disponible: $(grep -c '"name": "ios-arm64-release"' CMakePr
 echo "==> Seeding entrypoints"
 python3 "$HERE/02-seed-entrypoints.py"
 
+# Sin setjmp/longjmp el codegen compila longjmp como una llamada normal que
+# retorna, con el epilogo ya omitido: r1 y los callee-saved quedan corruptos y
+# el invitado acaba llamando a trozos de epilogo. Ver docs/INTERIOR_ENTRIES.md.
+echo "==> setjmp/longjmp del CRT"
+python3 "$HERE/02b-set-jumptargets.py"
+
 echo "==> Running codegen (slow: analyse + emit C++ for an 11 MB image)"
 "$TOOL" codegen ns3fb_manifest.toml
 
