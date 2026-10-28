@@ -121,6 +121,55 @@ NS3FB-ALIAS-AUTO 0x825A73F8 -> 0x825A73D8 (contenida en una funcion: se ejecuta 
 
 **A/B sin recompilar:** `Documents/alias_off.txt` desactiva el detector.
 
+
+## 4b. v3 — el detector de la v2 fallaba EN SILENCIO
+
+Log del 2026-10-28, build de esta rama (`01:01:47 → 01:07:41`, 5m54s):
+
+```
+01:02:43  NS3FB-TRAP 0x821E82C8 ... (calls=1)
+01:06:58  NS3FB-TRAP 0x825A73F8 ... (calls=1)
+01:07:22  NS3FB-TRAP 0x825A73F8 ... (calls=600)     <-- 25 llamadas/s, cada frame
+01:07:38  NS3FB-TRAP 0x825A7378 ... (calls=1)
+```
+
+**Cero `NS3FB-ALIAS-AUTO`.** Las semillas estaban bien (las tres interiores vuelven a
+saltar como trap, o sea que ya no estan en la tabla), y el motor siguio dibujando
+(`NS3FB-PASS ends=511200` en la ultima linea). Pero la redireccion no ocurrio ni una
+vez, y el usuario lo vio como "se volvio a quedar parado".
+
+### Por que
+
+Dos defectos del detector de la v2, los dos silenciosos:
+
+1. **El criterio de contencion era falso.** Se exigia que "el primer `blr` despues del
+   candidato no quede antes de la direccion". Ese criterio asume que una funcion tiene
+   un solo `blr` final, y **MSVC fusiona epilogos**: puede haber un `blr` en medio. Si
+   lo hay antes de la direccion, se descarta el candidato bueno y se devuelve 0.
+2. **No se comprobaba lo unico que importa.** Un candidato sirve para algo solo si
+   **esta en la tabla de funciones compiladas**. La v2 pedia el candidato por
+   `GetFunction()` y, si devolvia null, se rendia sin decir nada. Y es lo mas probable
+   aqui: si la direccion cae dentro de una funcion que el codegen ya conocia por
+   `.pdata`, sembrarla no crea una funcion nueva — el `GetFunction()` del inicio
+   sembrado devuelve null.
+
+### Como queda (v3)
+
+- **Criterio unico y comprobable**: se recorre hacia atras y se devuelve el primer
+  candidato con pinta de prologo y terminador delante **que este compilado**
+  (`GetFunction` no nulo). Si no lo esta, se sigue buscando en vez de rendirse.
+- **Ya no se usa "primer blr" para nada**, asi que los epilogos fusionados dejan de
+  importar.
+- **Si no redirige, lo dice**: `NS3FB-ALIAS-MISS <addr> (<n> candidatas, ninguna
+  compilada) base=ok/null disp=ok/null`.
+
+Verificado contra el `.text` real: las tres direcciones resuelven **a la primera
+candidata** (`probes=1`) a `0x825A73D8`, `0x821E82A8` y `0x825A72E8`.
+
+Con esto, el proximo log es concluyente por si mismo: o sale `NS3FB-ALIAS-AUTO` con
+la funcion elegida, o sale `NS3FB-ALIAS-MISS` diciendo cuantas candidatas se probaron
+y si llegaron `base` y `dispatcher`.
+
 ## 5. Las direcciones conocidas
 
 Ya no hay tabla: el detector las resuelve. Las verificadas contra el `.text` real
