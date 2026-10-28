@@ -27,6 +27,15 @@ rexglue-draw-stats.patch
 # mundo falla el depth test" de "el color sale negro" sin captura de GPU.
 rexglue-rt-stats.patch
 rexglue-trap-continue.patch
+# Redirige las ENTRADAS INTERIORES (direcciones que caen dentro de una funcion,
+# no en su inicio) al inicio de la funcion que las contiene. El invitado llama
+# por puntero a esas colas compartidas; compilar el cuerpo desde ahi desapila un
+# frame que nunca apilo, devuelve un valor arbitrario y corrompe el estado.
+# Sintoma observado: el juego va bien y una accion concreta (pulsar A para
+# interactuar) no hace nada porque su comprobacion devuelve 0.
+# Requiere rexglue-trap-continue.patch aplicado antes (usa sus includes).
+# A/B sin recompilar: Documents/alias_off.txt desactiva la redireccion.
+rexglue-alias-interior.patch
 # MSAA del host configurable sin recompilar: cvar msaa_override = 0|1|2|4
 # (0 = valor del invitado). Se aplica en la unica lectura de RB_SURFACE_INFO,
 # de la que derivan render pass, pipelines y shader de resolve, asi que no
