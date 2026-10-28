@@ -1,0 +1,126 @@
+--- a/src/system/function_dispatcher.cpp
++++ b/src/system/function_dispatcher.cpp
+@@ -26,6 +26,10 @@
+ #include <mutex>
+ #include <unordered_map>
+ 
++#include <cstdlib>
++#include <fstream>
++#include <string>
++
+ namespace rex::runtime {
+ 
+ namespace {
+@@ -60,12 +64,112 @@
+   }
+ }
+ 
++
++// NS3FB: entradas INTERIORES del invitado.
++//
++// El juego llama por puntero a direcciones que caen DENTRO de una funcion, no en
++// su inicio: son colas compartidas (logica final + epilogo). Sembrarlas en
++// entrypoint_seeds.txt hace que el codegen compile el cuerpo DESDE ahi, y ese
++// cuerpo desapila un frame que nunca apilo y vuelve con la direccion de retorno
++// de otra pila. No revienta: devuelve un valor arbitrario y deja el estado mal.
++//
++// Sintoma tipico: el juego va bien, el personaje se anima, la musica sigue, y
++// una accion concreta no hace nada porque su comprobacion devuelve 0.
++//
++// La tabla mapea cada entrada interior a la funcion que la contiene, localizada
++// hacia atras por el patron de prologo (mflr r12 / stw r12,-8(r1) / std r31 /
++// stwu r1,-N(r1)) y comprobando que la instruccion anterior es un terminador.
++// Se aplica ANTES de buscar en la tabla de funciones: el cuerpo mal compilado
++// no se ejecuta nunca.
++//
++// A/B sin recompilar: crear Documents/alias_off.txt desactiva la redireccion.
++// Cada entrada avisa una vez en el log para poder correlacionar sintomas.
++static constexpr uint32_t kNs3fbInteriorAlias[][2] = {
++    {0x821E82C8, 0x821E82A8},
++    {0x82261C68, 0x82261BA0},
++    {0x82261C78, 0x82261BA0},
++    {0x82261C98, 0x82261BA0},
++    {0x82261CA8, 0x82261BA0},
++    {0x82264BD0, 0x82264BB8},
++    {0x82264BE0, 0x82264BB8},
++    {0x8226C750, 0x8226C748},
++    {0x8226C790, 0x8226C748},
++    {0x82272648, 0x822725F0},
++    {0x82272CF8, 0x82272CD0},
++    {0x82296CB0, 0x82296C68},
++    {0x8239B2D8, 0x8239B2A8},
++    {0x82526C88, 0x82526C10},
++    {0x82575E68, 0x82575D68},
++    {0x82575F78, 0x82575D68},
++    {0x825A7258, 0x825A7218},
++    {0x825A7278, 0x825A7218},
++    {0x825A72F8, 0x825A72E8},
++    {0x825A7308, 0x825A72E8},
++    {0x825A7348, 0x825A72E8},
++    {0x825A73A8, 0x825A7380},
++    {0x825A73F8, 0x825A73D8},
++    {0x825E3278, 0x825E30D0},
++    {0x825EBAC8, 0x825EB770},
++    {0x826057F8, 0x82605478},
++    {0x8262C590, 0x8262C528},
++    {0x8269D310, 0x8269D1E0},
++    {0x8269ECF8, 0x8269E8F0},
++    {0x826E4C20, 0x826E4BE0},
++    {0x826EC2E8, 0x826EC220},
++    {0x82723138, 0x82723078},
++    {0x82768360, 0x82768268},
++    {0x8276D788, 0x8276CA78},
++    {0x8276F2A0, 0x8276F268},
++    {0x827D9BA8, 0x827D9B18},
++    {0x827DD430, 0x827DD370},
++    {0x828401F0, 0x828401E8},
++    {0x82840208, 0x828401E8},
++    {0x828628F8, 0x828628B8},
++    {0x82868BA0, 0x82868B78},
++    {0x828DE618, 0x828DE598},
++};
++
++static bool Ns3fbAliasDisabled() {
++  static const bool disabled = [] {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) {
++      return false;
++    }
++    std::ifstream marker(std::string(home) + "/Documents/alias_off.txt");
++    return marker.good();
++  }();
++  return disabled;
++}
++
++static uint32_t Ns3fbRedirectInterior(uint32_t guest_address) {
++  constexpr size_t kCount = sizeof(kNs3fbInteriorAlias) / sizeof(kNs3fbInteriorAlias[0]);
++  static bool reported[kCount] = {};
++  for (size_t i = 0; i < kCount; ++i) {
++    if (kNs3fbInteriorAlias[i][0] != guest_address) {
++      continue;
++    }
++    if (Ns3fbAliasDisabled()) {
++      return guest_address;
++    }
++    if (!reported[i]) {
++      reported[i] = true;
++      REXLOG_WARN(
++          "NS3FB-ALIAS 0x{:08X} -> 0x{:08X} (entrada interior: se ejecuta la funcion completa)",
++          guest_address, kNs3fbInteriorAlias[i][1]);
++    }
++    return kNs3fbInteriorAlias[i][1];
++  }
++  return guest_address;
++}
++
+ PPCFunc* ResolveIndirectFunction(uint32_t guest_address) {
+   FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
+   if (!dispatcher) {
+     return &InvalidFunctionTrap;
+   }
+ 
++  guest_address = Ns3fbRedirectInterior(guest_address);
++
+   if (PPCFunc* func = dispatcher->GetFunction(guest_address)) {
+     return func;
+   }
