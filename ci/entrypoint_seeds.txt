@@ -300,3 +300,51 @@
 0x82272CF8
 0x825A7258
 0x825A73A8
+
+# --- 2026-10-27 23:12-23:17: modo historia, el personaje no se mueve ---------
+# Sesion de 5m18s a 29,6 fps (960x540, rt_path=fbo, msaa=0). Cero errores y el
+# motor nunca se detiene: lo que no ocurre es la logica del evento.
+# Sintoma: en el modo historia el personaje se queda quieto y no responde,
+# mientras el juego sigue dibujando y sonando a 30 fps.
+# Tres traps nuevos, ejecutados como no-op por el parche trap-continue:
+#   23:13:22  0x821E82C8  metodo virtual de ccAdvMobObj: la unica referencia
+#                         estatica esta en la tabla de .rdata de 0x820053E8,
+#                         junto a las cadenas "ccAdvMobObjD..." (modo aventura).
+#   23:17:06  0x825A73F8  entrada INTERIOR de sub_825A73E0 (+0x18): es el bctrl
+#                         que despacha el slot virtual 0x42C. Justo antes, a
+#                         las 23:17:05, se crean pipelines nuevos: cambio de
+#                         escena/evento. 4s despues salta el logro 47.
+#   23:17:36  0x825A7378  entrada INTERIOR: el blr final de otra funcion.
+# Es el mismo patron que el 2026-10-24 02:01 ("al pulsar A se queda corriendo,
+# esperando callback"): la familia 0x825A7xxx son callbacks de evento que la
+# tabla construye en runtime, asi que se descubren de uno en uno.
+0x821E82C8
+0x825A73F8
+0x825A7378
+
+# --- 2026-10-27: los 19 thunks de vtable que faltaban -------------------------
+# tools/xex/find_callback_thunks.py recorria solo 0x825A7000-0x825A8000. Sobre
+# TODO el .text salen 164 thunks: 145 ya estaban sembrados y estos 19 no.
+# Son thunks de 16 bytes (lwz r12,0(r3) / lwz r11,OFF(r12) / mtctr r11 / bctr);
+# el comentario de cada uno es el slot virtual que despacha. Sembrarlos cierra
+# la familia de golpe: cada uno sin sembrar es un NS3FB-TRAP esperando a que
+# alguien entre en la pantalla que lo usa.
+0x82261e68  # slot 0x2C
+0x82261e78  # slot 0x3C
+0x82261e88  # slot 0x20
+0x82261e98  # slot 0x30
+0x82261ea8  # slot 0x24
+0x82261eb8  # slot 0x34
+0x82264dd0  # slot 0x28
+0x82264de0  # slot 0x38
+0x82272838  # slot 0x10
+0x82272848  # slot 0x14
+0x82272ee8  # slot 0x0C
+0x82272ef8  # slot 0x08
+0x82296ea0  # slot 0x6CC
+0x822eb130  # slot 0x6D8
+0x82353e38  # slot 0x5E8
+0x825f3278  # slot 0x18
+0x8269d648  # slot 0x1C
+0x8269eef8  # slot 0x58
+0x826acb68  # slot 0x04
