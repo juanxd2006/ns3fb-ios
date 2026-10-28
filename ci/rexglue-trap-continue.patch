@@ -5,12 +5,12 @@
  #include <rex/system/thread_state.h>
  
 +#include <mutex>
-+#include <unordered_set>
++#include <unordered_map>
 +
  namespace rex::runtime {
  
  namespace {
-@@ -34,9 +37,24 @@
+@@ -34,9 +37,27 @@
  
  }  // namespace
  
@@ -23,16 +23,19 @@
 -  REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X}",
 -            ctx.last_indirect_target);
 +  static std::mutex trap_mutex;
-+  static std::unordered_set<uint32_t> trap_reported;
++  static std::unordered_map<uint32_t, uint64_t> trap_calls;
 +  const uint32_t trap_target = ctx.last_indirect_target;
-+  bool trap_first = false;
++  uint64_t trap_count = 0;
 +  {
 +    std::lock_guard<std::mutex> trap_lock(trap_mutex);
-+    trap_first = trap_reported.insert(trap_target).second;
++    trap_count = ++trap_calls[trap_target];
 +  }
-+  if (trap_first) {
-+    REXLOG_WARN("NS3FB-TRAP 0x{:08X} unregistered guest function, continuing as no-op",
-+                trap_target);
++  // La primera llamada identifica la direccion; despues, una de cada 600 deja
++  // su marca de tiempo en el log: eso es lo que separa un callback de un solo
++  // uso de una ruta caliente que se ejecuta en cada frame.
++  if (trap_count == 1 || (trap_count % 600) == 0) {
++    REXLOG_WARN("NS3FB-TRAP 0x{:08X} unregistered guest function, no-op (calls={})",
++                trap_target, trap_count);
 +  }
  }
  
