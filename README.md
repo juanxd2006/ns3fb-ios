@@ -67,7 +67,7 @@ Playable start to finish on iPhone 11 at a stable ~30 fps (960×540, GPU ~27 ms/
 | VS Battle, practice, HUD, particles, audio | ✅ |
 | Ultimate jutsus, awakening ("beast mode"), end of match | ✅ |
 | Results screen and Ryos screen | ✅ |
-| Story mode | ✅ |
+| Story mode | ✅ (mob-battle combo does not advance — see [v0.2.0](docs/RELEASE_NOTES_v0.2.0.md)) |
 | Touch controls + Bluetooth controller (Xbox/PlayStation/MFi) | ✅ |
 | Game Mode, custom app icon | ✅ |
 | 1280×720 | ❌ ~18 fps — SDK ceiling, see [Performance](#-performance) |
