@@ -35,14 +35,18 @@ extern "C" size_t xpc_shmem_map(xpc_object_t xpc_shmem, void** region);
 #endif
 
 // mach/mach_vm.h no se puede incluir en iOS (es un #error), pero los simbolos
-// existen en libSystem. Es lo mismo que hace MeloNX.
-extern kern_return_t mach_vm_remap(vm_map_t target, mach_vm_address_t* address, mach_vm_size_t size,
-                                   mach_vm_offset_t mask, int flags, vm_map_t source,
-                                   mach_vm_address_t source_address, boolean_t copy,
-                                   vm_prot_t* current_protection, vm_prot_t* max_protection,
-                                   vm_inherit_t inheritance);
-extern kern_return_t mach_vm_deallocate(vm_map_t target, mach_vm_address_t address,
-                                        mach_vm_size_t size);
+// existen en libsystem_kernel. OJO: en un .mm hay que declararlos con enlace C;
+// sin extern "C" el compilador los mangla como C++ y el enlazado falla con
+// "found '_mach_vm_remap' ... declaration possibly missing 'extern \"C\"'".
+extern "C" {
+kern_return_t mach_vm_remap(vm_map_t target, mach_vm_address_t* address, mach_vm_size_t size,
+                            mach_vm_offset_t mask, int flags, vm_map_t source,
+                            mach_vm_address_t source_address, boolean_t copy,
+                            vm_prot_t* current_protection, vm_prot_t* max_protection,
+                            vm_inherit_t inheritance);
+kern_return_t mach_vm_deallocate(vm_map_t target, mach_vm_address_t address,
+                                 mach_vm_size_t size);
+}
 
 #ifndef VM_FLAGS_FIXED
 #define VM_FLAGS_FIXED 0x0
