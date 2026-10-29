@@ -67,7 +67,7 @@ Jugable de principio a fin en iPhone 11, a ~30 fps estables (960×540, GPU ~27 m
 | VS Battle, práctica, HUD, partículas, audio | ✅ |
 | Jutsus definitivos, awakening ("modo bestia"), fin de combate | ✅ |
 | Pantalla de resultados y de Ryos | ✅ |
-| Modo historia | ✅ |
+| Modo historia | ✅ (el combo de mob battle no avanza — ver [v0.2.0](docs/RELEASE_NOTES_v0.2.0.md)) |
 | Controles táctiles + mando Bluetooth (Xbox/PlayStation/MFi) | ✅ |
 | Game Mode, icono propio | ✅ |
 | 1280×720 | ❌ ~18 fps — techo del SDK, ver [Rendimiento](#-rendimiento) |

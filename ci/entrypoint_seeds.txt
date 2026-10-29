@@ -300,3 +300,78 @@
 0x82272CF8
 0x825A7258
 0x825A73A8
+
+# --- 2026-10-28: thunks de vtable que faltaban (cosecha completa del .text) ----
+# tools/xex/find_callback_thunks.py recorria solo 0x825A7000-0x825A8000. Sobre
+# TODO el .text salen 164 thunks: 145 ya estaban sembrados y faltaban estos 19.
+# Son thunks de 16 bytes (lwz r12,0(r3) / lwz r11,OFF(r12) / mtctr r11 / bctr),
+# autonomas por construccion: sembrarlas no parte ninguna funcion.
+0x82261e68
+0x82261e78
+0x82261e88
+0x82261e98
+0x82261ea8
+0x82261eb8
+0x82264dd0
+0x82264de0
+0x82272838
+0x82272848
+0x82272ee8
+0x82272ef8
+0x82296ea0
+0x822eb130
+0x82353e38
+0x825f3278
+0x8269d648
+0x8269eef8
+0x826acb68
+
+# --- 2026-10-28: inicios de funcion de los callbacks del modo historia --------
+# 0x825A73F8 y 0x821E82C8 son entradas INTERIORES (caen a mitad de funcion) y NO
+# se siembran: si estan en la tabla, la llamada resuelve al cuerpo mal compilado
+# y el detector de ci/rexglue-alias-interior.patch nunca llega a ejecutarse.
+# En su lugar se siembran los INICIOS REALES, que es a donde redirige:
+#
+#   0x825A73D8  comprobacion de accion (la A). Cuerpo 0x825A73D8-0x825A7430,
+#               acaba en blr y le sigue relleno: funcion autocontenida.
+#   0x821E82A8  constructor de ccAdvMobObj. Cuerpo 0x821E82A8-0x821E8310, idem.
+#
+# La regla que salio de un fallo (ver docs/INTERIOR_ENTRIES.md): solo se siembra
+# una direccion cuando se sabe que es un inicio de funcion REAL y que su cuerpo
+# termina antes de la siguiente funcion. Sembrar una direccion interior parte la
+# funcion que la contiene y el juego muere con "Unresolved branch".
+# 2026-10-28: se siembra SOLO 0x825A73F8 (y ninguna otra de esta familia).
+# Es la comprobacion de accion, que el juego llama en cada frame (calls=600 en
+# 24 s). Sin ella el personaje no se mueve; con ella vuelve el movimiento, que
+# es el estado jugable conocido.
+#
+# 0x821E82C8 (constructor de ccAdvMobObj) y 0x825A73D8 se dejan SIN sembrar.
+# El detector que las hubiera redirigido esta desactivado en ci/patches.list,
+# asi que 0x821E82C8 simplemente salta como trap y se ejecuta como no-op: una
+# linea en el log por sesion y el juego sigue. Eso es todo lo que hace ahora.
+0x825a73f8
+
+# --- 2026-10-28: ramas condicionales sin resolver que reporto el codegen -------
+# El propio codegen las lista al recompilar:
+#   Unresolved conditional branch to 0x82261E40 from 0x82261E74
+#   Unresolved conditional branch to 0x82261EB0 from 0x82261F60   (x7)
+#   Unresolved conditional branch to 0x82296DF0 from 0x82296EA4   (x10)
+#   Unresolved conditional branch to 0x82353E10 from 0x82353E88
+#   Unresolved conditional branch to 0x827D5CBC from 0x827D5D08
+#
+# Cuatro son codigo INTERIOR de funciones que el analizador no descubrio. Se
+# siembra el INICIO de esas funciones, no la direccion interior:
+#   0x82261E40 esta dentro de 0x82261BA0
+#   0x82296DF0 esta dentro de 0x82296C68
+#   0x82353E10 esta dentro de 0x82353D90
+#   0x827D5CBC esta dentro de 0x827D5BD8
+# Las cuatro empiezan con el prologo de siempre (mflr r12 / stw / std / stwu r1).
+#
+# La quinta, 0x82261EB0, NO se siembra: es el `mtctr r11 / bctr` de dentro del
+# thunk 0x82261EA8. Es una etiqueta compartida a la que otros puntos saltan para
+# despachar el virtual; sembrarla partiria el thunk en dos. Queda como aviso.
+0x82261ba0
+0x82296c68
+0x82353d90
+0x827d5bd8
+

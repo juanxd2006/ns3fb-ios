@@ -1,0 +1,143 @@
+--- a/src/system/function_dispatcher.cpp
++++ b/src/system/function_dispatcher.cpp
+@@ -26,6 +26,10 @@
+ #include <mutex>
+ #include <unordered_map>
+ 
++#include <cstdlib>
++#include <fstream>
++#include <string>
++
+ namespace rex::runtime {
+ 
+ namespace {
+@@ -37,12 +41,96 @@
+ 
+ }  // namespace
+ 
++// ---------------------------------------------------------------------------
++// NS3FB: entradas INTERIORES del invitado.
++//
++// El juego llama por puntero a direcciones que caen DENTRO de una funcion. Si el
++// codegen compila desde ahi, el cuerpo desapila un frame que nunca apilo.
++//
++// v3 — dos cambios sobre la v2, que fallaba EN SILENCIO (log del 2026-10-28
++// 01:01-01:07: tres direcciones saltaron como trap y cero NS3FB-ALIAS-AUTO):
++//
++//   1. El criterio ya NO es "la funcion contiene la direccion" (primer blr
++//      despues del candidato). Ese criterio es falso con MSVC, que fusiona
++//      epilogos: un blr puede estar en medio de la funcion y entonces se
++//      rechaza el candidato bueno. Ahora el criterio es duro y comprobable:
++//      el candidato tiene que ESTAR EN LA TABLA DE FUNCIONES compiladas. Si no
++//      esta, se sigue buscando hacia atras en vez de rendirse.
++//   2. Si no se redirige, se dice POR QUE (NS3FB-ALIAS-MISS) en vez de devolver
++//      no-op en silencio.
++//
++// A/B sin recompilar: Documents/alias_off.txt lo desactiva.
++// ---------------------------------------------------------------------------
++static bool Ns3fbAliasDisabled() {
++  static const bool disabled = [] {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) {
++      return false;
++    }
++    std::ifstream marker(std::string(home) + "/Documents/alias_off.txt");
++    return marker.good();
++  }();
++  return disabled;
++}
++
++/// Devuelve el inicio de funcion MAS CERCANO por detras de `addr`, y solo si
++/// esta compilado. Si no lo esta, 0 — no se adivina con funciones mas antiguas. `probes` cuenta los candidatos con pinta
++/// de prologo que se probaron, para el diagnostico.
++static uint32_t Ns3fbFindCompiledContainer(const uint8_t* base, uint32_t addr,
++                                           FunctionDispatcher* dispatcher,
++                                           uint32_t* probes, uint32_t* last_candidate) {
++  if (probes) {
++    *probes = 0;
++  }
++  if (last_candidate) {
++    *last_candidate = 0;
++  }
++  if (!base || !dispatcher || addr < 0x1000) {
++    return 0;
++  }
++  auto load = [base](uint32_t a) {
++    const uint8_t* p = base + a;
++    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | uint32_t(p[3]);
++  };
++  for (uint32_t back = 4; back <= 0x1400; back += 4) {
++    const uint32_t candidate = addr - back;
++    const uint32_t w0 = load(candidate);
++    const uint32_t w1 = load(candidate + 4);
++    const bool prologue = (w0 == 0x7D8802A6 && w1 == 0x9181FFF8) ||  // mflr r12 / stw r12,-8(r1)
++                          (w0 & 0xFFFF0000) == 0x94210000 ||         // stwu r1,-N(r1)
++                          w0 == 0x7C0802A6;                          // mflr r0
++    if (!prologue) {
++      continue;
++    }
++    const uint32_t previous = load(candidate - 4);
++    const bool boundary = previous == 0x4E800020 ||                           // blr
++                          previous == 0x4E800420 ||                           // bctr
++                          previous == 0x00000000 || previous == 0x60000000 ||  // relleno / nop
++                          (previous & 0xFC000003) == 0x48000000;             // b
++    if (!boundary) {
++      continue;
++    }
++    if (probes) {
++      ++*probes;
++    }
++    if (last_candidate) {
++      *last_candidate = candidate;
++    }
++    // SOLO la candidata mas cercana. Si no esta compilada, se devuelve 0: seguir
++    // hacia atras termina llamando a una funcion que no tiene nada que ver con
++    // esta direccion, con su mismo `this`, y el invitado lee basura y muere
++    // (log 2026-10-28 02:04:35: 0x821E82C8 -> 0x821E8118 -> read of guest 0x4).
++    return dispatcher->GetFunction(candidate) ? candidate : 0;
++  }
++  return 0;
++}
++
+ // NS3FB diagnostic build: instead of aborting on an unregistered guest
+ // function, log the address once and return as a no-op stub so the title keeps
+ // running and a single run collects every missing entrypoint in one log.
+ // Guest state is not emulated here, so the process may die later in a different
+ // way - that is expected and acceptable for address harvesting.
+-static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* /*base*/) {
++static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* base) {
+   static std::mutex trap_mutex;
+   static std::unordered_map<uint32_t, uint64_t> trap_calls;
+   const uint32_t trap_target = ctx.last_indirect_target;
+@@ -51,6 +139,31 @@
+     std::lock_guard<std::mutex> trap_lock(trap_mutex);
+     trap_count = ++trap_calls[trap_target];
+   }
++
++  // Antes de darla por perdida: ejecutar la funcion que la contiene, si esta
++  // compilada. Si no, no-op (nunca otra funcion).
++  if (!Ns3fbAliasDisabled()) {
++    FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
++    uint32_t probes = 0;
++    uint32_t last_candidate = 0;
++    const uint32_t container = Ns3fbFindCompiledContainer(base, trap_target, dispatcher,
++                                                          &probes, &last_candidate);
++    if (container != 0 && container != trap_target) {
++      if (PPCFunc* target = dispatcher->GetFunction(container)) {
++        if (trap_count == 1) {
++          REXLOG_WARN(
++              "NS3FB-ALIAS-AUTO 0x{:08X} -> 0x{:08X} (contenedora mas cercana, compilada)",
++              trap_target, container);
++        }
++        target(ctx, base);
++        return;
++      }
++    } else if (trap_count == 1) {
++      REXLOG_WARN(
++          "NS3FB-ALIAS-MISS 0x{:08X} (candidata mas cercana 0x{:08X} {}compilada): no-op",
++          trap_target, last_candidate, probes ? "" : "no-");
++    }
++  }
+   // La primera llamada identifica la direccion; despues, una de cada 600 deja
+   // su marca de tiempo en el log: eso es lo que separa un callback de un solo
+   // uso de una ruta caliente que se ejecuta en cada frame.

@@ -194,3 +194,67 @@ workflows:
           ls -lh MetalSpike.ipa
     artifacts:
       - MetalSpike.ipa
+
+  # ---------------------------------------------------------------------------
+  # Variante EXPERIMENTAL: compila tambien la extension de memoria
+  # (ns3fb-mem.appex), que presta RAM desde su propio proceso.
+  #
+  # Workflow aparte a proposito: si el .appex no compila o la firma anidada se
+  # rompe, no queremos que eso tumbe el build normal. Ver
+  # docs/RAM_EXTENSION_PLAN.md.
+  # ---------------------------------------------------------------------------
+  ios-memext:
+    name: NS3FB iOS + memory extension (experimental)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      vars:
+        REXGLUE_SDK: $CM_BUILD_DIR/thirdparty/rexglue-sdk
+        NS3FB_CMAKE_ARGS: -DNS3FB_MEM_EXTENSION=ON
+      xcode: 16.4
+      cocoapods: default
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/mac-arm64
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/ios-arm64
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk/out/install/ios-arm64
+        - $CM_BUILD_DIR/thirdparty/rexglue-sdk-ios.patch
+    scripts:
+      - name: Toolchain
+        script: |
+          set -e
+          xcodebuild -version
+          cmake --version
+          if ! command -v ninja >/dev/null 2>&1; then brew install ninja; fi
+          ninja --version
+      - name: Stage game executable
+        script: |
+          if [ ! -f ci/game/default.xex ]; then
+            echo "ERROR: falta ci/game/default.xex (ver ci/game/README.md)"; exit 1
+          fi
+          mkdir -p app/game && cp ci/game/default.xex app/game/default.xex
+          shasum -a 1 app/game/default.xex
+      - name: Build ReXGlue SDK
+        script: |
+          chmod +x scripts/*.sh
+          ./scripts/00-fetch-sdk.sh
+      - name: Codegen
+        script: ./scripts/01-codegen.sh
+      - name: Build app (con extension)
+        script: |
+          ./scripts/03-build-app.sh
+          echo "==> Buscando el .appex en el bundle"
+          APP="app/out/build/ios-arm64-release/ns3fb.app"
+          if [ ! -d "$APP/PlugIns/ns3fb-mem.appex" ]; then
+            echo "FALLO: el flag estaba ON pero no hay ns3fb-mem.appex en PlugIns/"
+            ls -la "$APP" || true
+            exit 1
+          fi
+          ls -la "$APP/PlugIns/ns3fb-mem.appex"
+          echo "OK: extension empaquetada"
+      - name: Package IPA
+        script: |
+          ./scripts/make-ipa.sh
+          shasum -a 256 NS3FB.ipa
+    artifacts:
+      - NS3FB.ipa

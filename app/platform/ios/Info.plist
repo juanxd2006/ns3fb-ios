@@ -47,9 +47,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<!-- Game Mode de iOS 18+: da al juego prioridad maxima de CPU y GPU y baja
 	     la actividad en segundo plano. LSApplicationCategoryType por si solo NO
 	     basta: Apple dice explicitamente que sin la clave de Game Mode puede no

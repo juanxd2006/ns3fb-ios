@@ -1,59 +1,102 @@
 // ns3fb-mem: extension que presta memoria al app por XPC shared memory.
 //
-// NO SE COMPILA (ver README.md y docs/RAM_EXTENSION_PLAN.md).
+// Se compila SOLO con -DNS3FB_MEM_EXTENSION=ON (apagado por defecto). Ver
+// docs/RAM_EXTENSION_PLAN.md para el diseno y lo que falta por verificar.
 //
-// Idea: el app pide "N MB", la extension crea la region con xpc_shmem_create(),
-// la retiene en su proceso y devuelve el descriptor por la respuesta de la
-// peticion; el app la mapea con xpc_shmem_map() y la usa como backing de la
-// memoria del invitado. Las paginas quedan contadas en el proceso de la
-// extension, que es lo que sube el techo conjunto.
+// Flujo:
+//   1. El app se conecta al servicio mach "<bundle-id>.memext".
+//   2. Pide N bytes con el mensaje { "bytes": N }.
+//   3. La extension crea la region con xpc_shmem_create() EN SU PROCESO, la
+//      retiene y devuelve el objeto en la respuesta bajo la clave "shmem".
+//   4. El app la mapea con xpc_shmem_map().
 //
-// Puntos que hay que resolver antes de activarlo (documentados en el plan):
-//  - xpc_shmem_create/map son API no publica: comprobar que existen en el SDK
-//    de iOS que use el build y que el enlazado resuelve.
-//  - La extension debe seguir viva mientras el juego corre; iOS la puede matar
-//    y hay que poder reinstanciarla sin corromper la memoria del invitado.
-//  - Firma: el .appex necesita su propio perfil; con Apple ID gratis y
-//    Sideloadly hay que comprobar que la firma anidada se aplica.
+// Las paginas quedan contabilizadas en el proceso de la extension, no en el del
+// app. Esa es toda la tecnica.
 
 #import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
 #include <xpc/xpc.h>
+#if __has_include(<xpc/shmem.h>)
 #include <xpc/shmem.h>
+#define NS3FB_HAVE_XPC_SHMEM 1
+#else
+#define NS3FB_HAVE_XPC_SHMEM 0
+#endif
+#include <cstdio>
 
+// Regiones vivas mientras viva el proceso. Si iOS mata la extension, estas
+// paginas desaparecen y el app se queda con memoria invalida mapeada: por eso
+// el cliente del app tiene que tratar la caida como error fatal, no reintentar.
+static xpc_object_t g_region = NULL;
+
+
+// Entrada de la extension. No completa la peticion A PROPOSITO: mientras no la
+// complete, iOS mantiene el proceso vivo, y con el, la region creada por el
+// listener de arriba. El trabajo real no ocurre aqui, sino en el servicio mach.
 @interface NS3FBMemExtension : NSObject <NSExtensionRequestHandling>
 @end
 
 @implementation NS3FBMemExtension
 
 - (void)beginRequestWithExtensionContext:(NSExtensionContext*)context {
-  // Tamano pedido: el app lo manda en NSExtensionItem.attachments como texto.
-  size_t requested = 512u * 1024u * 1024u;
-  for (NSExtensionItem* item in context.inputItems) {
-    for (NSItemProvider* provider in item.attachments) {
-      if ([provider hasItemConformingToTypeIdentifier:@"public.plain-text"]) {
-        [provider loadItemForTypeIdentifier:@"public.plain-text"
-                                   options:nil
-                         completionHandler:^(id<NSSecureCoding> obj, NSError* err) {
-                           if ([obj isKindOfClass:[NSString class]]) {
-                             requested = (size_t)[(NSString*)obj longLongValue];
-                           }
-                         }];
-      }
-    }
-  }
-
-  // La region vive en ESTE proceso.
-  xpc_object_t shmem = xpc_shmem_create(NULL, requested);
-  if (!shmem) {
-    NSError* error = [NSError errorWithDomain:@"ns3fb.mem" code:1 userInfo:nil];
-    [context cancelRequestWithError:error];
-    return;
-  }
-  // TODO: entregar el descriptor al app y mantener la region viva; ver el plan.
-  (void)shmem;
-
-  [context completeRequestReturningItems:@[] completionHandler:nil];
+  std::fprintf(stderr, "[ns3fb-mem] extension arrancada; queda viva para servir memoria\n");
+  (void)context;  // sin completeRequestReturningItems: no muere
 }
 
 @end
+
+
+static void ns3fb_mem_peer(xpc_connection_t peer) {
+  xpc_connection_set_event_handler(peer, ^(xpc_object_t event) {
+    if (xpc_get_type(event) != XPC_TYPE_DICTIONARY) {
+      return;
+    }
+#if NS3FB_HAVE_XPC_SHMEM
+    size_t bytes = (size_t)xpc_dictionary_get_uint64(event, "bytes");
+    if (bytes == 0) {
+      bytes = 512ull * 1024ull * 1024ull;
+    }
+    if (!g_region) {
+      g_region = xpc_shmem_create(NULL, bytes);
+      if (g_region) {
+        std::fprintf(stderr, "[ns3fb-mem] region creada: %zu bytes\n", bytes);
+      } else {
+        std::fprintf(stderr, "[ns3fb-mem] xpc_shmem_create fallo para %zu bytes\n", bytes);
+      }
+    }
+    xpc_object_t reply = xpc_dictionary_create_reply(event);
+    if (reply) {
+      if (g_region) {
+        xpc_dictionary_set_value(reply, "shmem", g_region);
+        xpc_dictionary_set_uint64(reply, "bytes", bytes);
+      } else {
+        xpc_dictionary_set_uint64(reply, "bytes", 0);
+      }
+      xpc_connection_send_message(peer, reply);
+    }
+#else
+    std::fprintf(stderr, "[ns3fb-mem] este SDK no tiene <xpc/shmem.h>\n");
+#endif
+  });
+  xpc_connection_resume(peer);
+}
+
+__attribute__((constructor)) static void ns3fb_mem_start(void) {
+#if NS3FB_HAVE_XPC_SHMEM
+  // Nombre del servicio declarado en Info.plist (MachServices). El sufijo
+  // ".memext" lo pone el bundle id que inyecta CMake con NS3FB_BUNDLE_ID.
+  const char* service = NS3FB_MEMEXT_SERVICE_NAME;
+  xpc_connection_t listener = xpc_connection_create_mach_service(service, NULL,
+                                                                 XPC_CONNECTION_MACH_SERVICE_LISTENER);
+  if (listener) {
+    xpc_connection_set_event_handler(listener, ^(xpc_object_t event) {
+      if (xpc_get_type(event) == XPC_TYPE_CONNECTION) {
+        ns3fb_mem_peer((xpc_connection_t)event);
+      }
+    });
+    xpc_connection_resume(listener);
+    std::fprintf(stderr, "[ns3fb-mem] escuchando en %s\n", service);
+  } else {
+    std::fprintf(stderr, "[ns3fb-mem] no se pudo crear el listener %s\n", service);
+  }
+#endif
+}

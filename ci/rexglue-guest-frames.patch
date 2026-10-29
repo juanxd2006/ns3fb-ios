@@ -1,0 +1,93 @@
+--- a/src/kernel/xboxkrnl/xboxkrnl_video.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+@@ -14,6 +14,10 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <chrono>
++#include <cstdlib>
++#include <fstream>
++#include <mutex>
+ #include <string>
+ 
+ #include <rex/cvar.h>
+@@ -437,6 +441,70 @@
+   return 0;
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// NS3FB: contador de frames del invitado. Se activa con Documents/input_trace.txt.
++//
++// Cada VdSwap es una peticion de presentacion del juego: en este titulo, un
++// frame de logica = un VdSwap. Se compara con el HUD: si swaps/s es el doble de
++// los fps del HUD, la logica corre al doble y las ventanas de QTE duran la mitad
++// en tiempo real (es el sintoma que reporto el port de PC a 60 fps).
++// ---------------------------------------------------------------------------
++namespace {
++
++/// ENCENDIDO por defecto. Se calla con Documents/input_trace_off.txt.
++bool Ns3fbFrameTraceEnabled() {
++  static const bool enabled = [] {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) {
++      return true;
++    }
++    std::ifstream off_marker(std::string(home) + "/Documents/input_trace_off.txt");
++    return !off_marker.good();
++  }();
++  return enabled;
++}
++
++struct Ns3fbFrameTraceState {
++  std::mutex mutex;
++  uint64_t swaps = 0;
++  uint64_t window_swaps = 0;
++  std::chrono::steady_clock::time_point window_start = std::chrono::steady_clock::now();
++};
++
++Ns3fbFrameTraceState& Ns3fbFrameTrace() {
++  static Ns3fbFrameTraceState trace;
++  return trace;
++}
++
++void Ns3fbGuestFrameTick() {
++  if (!Ns3fbFrameTraceEnabled()) {
++    return;
++  }
++  auto& t = Ns3fbFrameTrace();
++  uint64_t swaps = 0;
++  uint64_t window_swaps = 0;
++  double seconds = 0.0;
++  {
++    std::lock_guard<std::mutex> lock(t.mutex);
++    ++t.swaps;
++    ++t.window_swaps;
++    const auto now = std::chrono::steady_clock::now();
++    seconds = std::chrono::duration<double>(now - t.window_start).count();
++    if (seconds < 2.0) {
++      return;
++    }
++    swaps = t.swaps;
++    window_swaps = t.window_swaps;
++    t.window_swaps = 0;
++    t.window_start = now;
++  }
++  REXLOG_INFO("NS3FB-GUEST-FRAMES swaps={:.1f}/s total={} (compara con los fps del HUD)",
++              double(window_swaps) / seconds, swaps);
++}
++
++}  // namespace
++
+ void VdSwap_entry(mapped_void buffer_ptr,      // ptr into primary ringbuffer
+                   mapped_void fetch_ptr,       // frontbuffer Direct3D 9 texture header fetch
+                   mapped_void unk2,            // system writeback ptr
+@@ -445,6 +513,8 @@
+                   mapped_u32 frontbuffer_ptr,  // ptr to frontbuffer address
+                   mapped_u32 texture_format_ptr, mapped_u32 color_space_ptr, mapped_u32 width,
+                   mapped_u32 height) {
++  Ns3fbGuestFrameTick();
++
+   // All of these parameters are REQUIRED.
+   assert(buffer_ptr);
+   assert(fetch_ptr);

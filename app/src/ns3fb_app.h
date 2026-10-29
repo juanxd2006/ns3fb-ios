@@ -421,6 +421,12 @@ class Ns3fbApp : public rex::ReXApp {
       }
     }
 
+    // Huella del build. __DATE__/__TIME__ los pone el compilador, asi que esta
+    // linea identifica EXACTAMENTE que binario genero el log. Sin esto ya hemos
+    // perdido tiempo dos veces preguntandonos si un log venia de un build con
+    // el arreglo o del anterior.
+    REXLOG_INFO("NS3FB-BUILD compilado {} {}", __DATE__, __TIME__);
+
     // El volcado va DESPUES del bucle de marcadores a proposito: si va antes,
     // los campos zoff/blendoff (y cualquier cvar que ponga un marcador) salen
     // con el valor previo y un marcador aplicado se lee como no aplicado.

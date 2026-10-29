@@ -1,7 +1,25 @@
 # Techo de RAM de iOS: plan para la variante NSExtension + xpc_shmem
 
-Estado: **disenado, no activo**. `app/platform/ios/memext/` tiene el andamiaje y
-no entra en el build. Este documento dice que falta y por que no se activo.
+Estado: **implementado, apagado por defecto**. El codigo existe y se compila con
+`-DNS3FB_MEM_EXTENSION=ON`; sin ese flag el build es identico al de antes y el
+cliente compila a un stub vacio.
+
+Implementado:
+
+| Pieza | Fichero |
+|---|---|
+| Target `.appex` + empaquetado en `PlugIns/` | `app/CMakeLists.txt` |
+| Extension (servicio mach + `xpc_shmem_create`) | `app/platform/ios/memext/NS3FBMemExtension.mm` |
+| `MachServices` + punto de extension | `app/platform/ios/memext/Info.plist` |
+| Cliente del app (`xpc_shmem_map`, con fallback) | `app/src/memext_client.{h,mm}` |
+
+**Sin validar.** Los dos puntos que siguen sin comprobarse son los mismos que
+antes, y no se pueden comprobar sin un Mac y un dispositivo:
+
+1. Que `xpc_shmem_create` / `xpc_shmem_map` enlacen en el SDK de iOS del build.
+   Si no existen, el flag ON no compila (`#error` explicito en el cliente).
+2. Que la firma anidada del `.appex` sobreviva al sideload. Un appex mal firmado
+   invalida la **instalacion entera**.
 
 ## El problema
 
