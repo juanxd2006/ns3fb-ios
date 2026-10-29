@@ -52,6 +52,13 @@ if [ -f "$ICON_B64" ]; then
   fi
 fi
 
+# Argumentos extra de CMake, para poder activar opciones experimentales desde
+# Codemagic sin tocar este script. Ejemplo:
+#   NS3FB_CMAKE_ARGS=-DNS3FB_MEM_EXTENSION=ON ./scripts/03-build-app.sh
+# Sin la variable, el build es exactamente el de siempre.
+EXTRA_CMAKE_ARGS="${NS3FB_CMAKE_ARGS:-}"
+[ -n "$EXTRA_CMAKE_ARGS" ] && echo "==> Extra CMake args: $EXTRA_CMAKE_ARGS"
+
 echo "==> Configuring (iOS arm64, CMake $("cmake" --version | head -1 | awk '{print $3}'))"
 cmake -S "$APP" -B "$BUILD" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -61,6 +68,7 @@ cmake -S "$APP" -B "$BUILD" -G Ninja \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=16.3 \
   -DCMAKE_PREFIX_PATH="$SDK/out/install/ios-arm64" \
   -Drexglue_DIR="$SDK/out/install/ios-arm64/lib/cmake/rexglue" \
+  $EXTRA_CMAKE_ARGS \
   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
   -DREXGLUE_HOST_TOOL="$SDK/out/mac-arm64/Release/rexglue" \
   -DNS3FB_IOS_SDK_LIB_DIR="$SDK/out/ios-arm64/Release"
