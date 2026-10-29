@@ -18,10 +18,13 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <vector>
 #include <mach-o/dyld.h>
 #include <rex/cvar.h>
 #include <rex/cvar_defaults.h>
 #include <rex/logging.h>
+#include <rex/system/xmemory.h>
+#include "ios/ns3fb_ram_donor.h"
 #else
 #define NS3FB_IOS 0
 #endif
@@ -49,6 +52,68 @@ class Ns3fbApp : public rex::ReXApp {
     std::error_code ec;
     const auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(buf), ec);
     return ec ? std::filesystem::path(buf).parent_path() : resolved.parent_path();
+  }
+
+  // La extraccion del disco puede acabar en una carpeta con cualquier nombre:
+  // se renombra, se descomprime dentro de "Naruto .../", o queda como
+  // ".../game/". Antes solo se aceptaba `Documents/game` exacto y, si no estaba,
+  // la app creaba un `Documents/game` VACIO y seguia, asi que en la app Archivos
+  // parecia que el juego se habia borrado solo.
+  //
+  // Orden de busqueda: Documents/game, Documents, cada subcarpeta de Documents, y
+  // un nivel mas dentro de esas (Documents/<x>/game). Devuelve vacio si no hay
+  // default.xex en ningun sitio. `looked` acumula lo visitado para el log.
+  static std::filesystem::path FindGameRoot(const std::filesystem::path& documents,
+                                            std::vector<std::filesystem::path>* looked) {
+    const auto has_xex = [](const std::filesystem::path& dir) {
+      std::error_code exists_ec;
+      return std::filesystem::is_regular_file(dir / "default.xex", exists_ec);
+    };
+
+    const std::filesystem::path docs_game = documents / "game";
+    looked->push_back(docs_game);
+    if (has_xex(docs_game)) {
+      return docs_game;
+    }
+
+    looked->push_back(documents);
+    if (has_xex(documents)) {
+      return documents;
+    }
+
+    std::vector<std::filesystem::path> level1;
+    std::error_code list_ec;
+    for (auto it = std::filesystem::directory_iterator(documents, list_ec);
+         !list_ec && it != std::filesystem::directory_iterator(); it.increment(list_ec)) {
+      std::error_code dir_ec;
+      if (it->is_directory(dir_ec)) {
+        level1.push_back(it->path());
+      }
+    }
+    std::sort(level1.begin(), level1.end());
+
+    for (const auto& dir : level1) {
+      looked->push_back(dir);
+      if (has_xex(dir)) {
+        return dir;
+      }
+    }
+
+    for (const auto& dir : level1) {
+      std::error_code sub_ec;
+      for (auto it = std::filesystem::directory_iterator(dir, sub_ec);
+           !sub_ec && it != std::filesystem::directory_iterator(); it.increment(sub_ec)) {
+        std::error_code dir_ec;
+        if (!it->is_directory(dir_ec)) {
+          continue;
+        }
+        if (has_xex(it->path())) {
+          return it->path();
+        }
+      }
+    }
+
+    return {};
   }
 
   // iOS launches an app with no argv, so --game_data_root/--gpu_plugin can never
@@ -160,8 +225,9 @@ class Ns3fbApp : public rex::ReXApp {
     // to mount. Only game_data_root matters.
     //
     // Two supported locations, in priority order:
-    //   1. Documents/game  - copied over with the Files app; can be replaced or
-    //                        fixed without re-signing or reinstalling.
+    //   1. Documents (la carpeta que se ve en la app Archivos): `game/` o
+    //      cualquier subcarpeta que tenga default.xex dentro. Se puede
+    //      reemplazar o arreglar sin re-firmar ni reinstalar.
     //   2. <bundle>/game   - baked into the .ipa by scripts/inject-game-files.sh;
     //                        readable (the bundle is read-only) but not writable.
     // Documents wins so an update dropped there overrides a stale bundle copy.
@@ -169,13 +235,35 @@ class Ns3fbApp : public rex::ReXApp {
       const auto docs_game = documents / "game";
       const auto bundle_game = BundleDir() / "game";
       std::error_code probe;
-      if (std::filesystem::exists(docs_game / "default.xex", probe)) {
-        paths.game_data_root = docs_game;
-      } else if (std::filesystem::exists(bundle_game / "default.xex", probe)) {
+
+      std::vector<std::filesystem::path> looked;
+      const std::filesystem::path docs_root = FindGameRoot(documents, &looked);
+
+      if (!docs_root.empty()) {
+        paths.game_data_root = docs_root;
+        REXLOG_INFO("NS3FB-GAME raiz del juego: {}", docs_root.string());
+      } else if (std::filesystem::is_regular_file(bundle_game / "default.xex", probe)) {
         paths.game_data_root = bundle_game;
+        REXLOG_INFO("NS3FB-GAME raiz del juego (dentro del bundle): {}",
+                    bundle_game.string());
       } else {
         paths.game_data_root = docs_game;
         std::filesystem::create_directories(paths.game_data_root, ec);
+        // Aviso explicito en vez de crear `game` vacia en silencio: es lo que
+        // hacia parecer que el juego "habia desaparecido" del dispositivo.
+        std::string where;
+        for (const auto& path : looked) {
+          if (!where.empty()) {
+            where += ", ";
+          }
+          where += (path == documents) ? std::string(".") : path.filename().string();
+        }
+        REXLOG_WARN(
+            "NS3FB-GAME no encuentro default.xex (buscado en: {}). Copia la extraccion "
+            "completa (default.xex + data/ + datafb/) a Documents/game o a cualquier "
+            "carpeta dentro de Documents. Se ha creado Documents/game vacia para no "
+            "fallar en este arranque.",
+            where);
       }
     }
     // Always override: ReXApp has already defaulted this to GetUserFolder()/ns3fb,
@@ -437,6 +525,75 @@ class Ns3fbApp : public rex::ReXApp {
         // Los dos overrides de diagnostico: si no son 1, los marcadores no se
         // aplicaron y el build no sirve para decidir nada.
         q_b("ztest_off"), q_b("blend_off"), q_b("ns3fb_diag"));
+
+    // Lo ultimo: sustituir la RAM del invitado por memoria de la extension.
+    // Va despues del volcado para que el log diga primero con que cvars se
+    // arranca y luego que hizo el donante.
+    InstallRamDonor();
+  }
+
+  // Extension de memoria: "RAM limit workaround" (docs/RAM_EXTENSION_PLAN.md).
+  //
+  // Se llama desde OnPreLaunchModule porque es el primer punto en el que el
+  // runtime ya tiene Memory inicializada (las vistas del invitado mapeadas) y
+  // el hilo del invitado todavia no ha arrancado: recolocar las vistas fisicas
+  // aqui es lo mas pronto posible y no pisa nada del juego.
+  //
+  // Apagado por defecto: solo se activa creando Documents/ramext_on.txt, para
+  // poder comparar el mismo build con y sin donante. Si algo falla (no hay
+  // extension, iOS la rechaza, reserva menos de lo pedido) se queda con el
+  // mapeo respaldado por fichero y el juego arranca igual.
+  void InstallRamDonor() {
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) {
+      return;
+    }
+    const std::filesystem::path documents = std::filesystem::path(home) / "Documents";
+    std::error_code ec;
+
+    if (!ns3fb_ram_donor_is_available()) {
+      REXLOG_INFO("NS3FB-RAM sin extension donante en este build (PlugIns/ vacio)");
+      return;
+    }
+    if (!std::filesystem::exists(documents / "ramext_on.txt", ec)) {
+      REXLOG_INFO("NS3FB-RAM desactivado (crea Documents/ramext_on.txt para probarlo)");
+      return;
+    }
+    // Por defecto los donantes se matan despues de mapear: las paginas ya estan
+    // en la app y asi iOS no los mata por su cuenta a mitad de partida. Este
+    // marcador los deja vivos para poder medir su footprint.
+    if (std::filesystem::exists(documents / "ramext_keepdonors.txt", ec)) {
+      REXLOG_INFO("NS3FB-RAM marcador ramext_keepdonors.txt: los donantes siguen vivos");
+      ns3fb_ram_donor_set_kill_after_mapping(false);
+    }
+
+    auto* memory = runtime() ? runtime()->memory() : nullptr;
+    if (!memory || !memory->virtual_membase()) {
+      REXLOG_WARN("NS3FB-RAM la memoria del invitado no esta lista; se omite");
+      return;
+    }
+
+    const uint64_t footprint_before = ns3fb_ram_donor_phys_footprint();
+    if (ns3fb_ram_donor_start(1, 10.0) == 0) {
+      REXLOG_WARN("NS3FB-RAM no arranco ningun donante: {}", ns3fb_ram_donor_last_error());
+      return;
+    }
+
+    // 0x20000000 = los 512 MB del heap fisico del invitado (heaps_.physical en
+    // el SDK). Todo lo que no se cubra se queda con el mapeo de fichero, que
+    // sigue siendo valido.
+    const uint64_t donated =
+        ns3fb_ram_donor_back_guest_ram(reinterpret_cast<uint8_t*>(memory->virtual_membase()),
+                                       0x20000000ull);
+    if (donated == 0) {
+      REXLOG_WARN("NS3FB-RAM nada respaldado ({}); se sigue con la memoria normal",
+                  ns3fb_ram_donor_last_error());
+      return;
+    }
+
+    REXLOG_INFO("NS3FB-RAM {} MB del invitado viven en la extension; footprint {} MB -> {} MB",
+                donated / (1024 * 1024), footprint_before / (1024 * 1024),
+                ns3fb_ram_donor_phys_footprint() / (1024 * 1024));
   }
 #endif
 };
