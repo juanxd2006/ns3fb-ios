@@ -6,10 +6,12 @@
 	<string>es</string>
 	<key>CFBundleDisplayName</key>
 	<string>NS3FB Mem</string>
+	<!-- CMake sustituye estas dos al generar el .appex; tienen que coincidir con
+	     OUTPUT_NAME del target (ns3fb-mem) y con el bundle id de la app + .mem. -->
 	<key>CFBundleExecutable</key>
-	<string>ns3fb-mem</string>
+	<string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
 	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -22,9 +24,11 @@
 	<string>1</string>
 	<key>NSExtension</key>
 	<dict>
-		<!-- Share Extension: es el unico punto que iOS arranca bajo demanda desde
-		     el propio app sin intervencion del usuario, y el que se usa en los
-		     ports que aplican esta tecnica. -->
+		<!-- Share Extension: es el unico punto de extension que iOS arranca bajo
+		     demanda desde la propia app (NSExtension, API privada) sin
+		     intervencion del usuario. FALSEPREDICATE la mantiene fuera de la hoja
+		     de compartir: no compite por ningun tipo de contenido, solo existe
+		     para que la app la instancie. -->
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>
 		<key>NSExtensionPrincipalClass</key>
