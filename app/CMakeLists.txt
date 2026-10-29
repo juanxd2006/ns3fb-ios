@@ -6,7 +6,7 @@
 # YOUR OWN game/default.xex - it is never part of this source tree.
 
 cmake_minimum_required(VERSION 3.25)
-project(ns3fb LANGUAGES CXX)
+project(ns3fb LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,6 +29,9 @@ include(generated/rexglue.cmake)
 
 set(NS3FB_SOURCES
     src/main.cpp
+    # Cliente de la extension de memoria. Con NS3FB_MEM_EXTENSION apagado
+    # compila a un stub que devuelve vacio: el build por defecto no cambia.
+    src/memext_client.mm
 )
 
 add_executable(ns3fb ${NS3FB_SOURCES})
@@ -94,6 +97,64 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
                 ${NS3FB_IOS_ICONS}
                 "$<TARGET_BUNDLE_CONTENT_DIR:ns3fb>"
             COMMENT "Copying app icons into ns3fb.app"
+            VERBATIM
+        )
+    endif()
+
+    # ---------------------------------------------------------------------
+    # ns3fb-mem: NSExtension que presta memoria desde su propio proceso.
+    #
+    # APAGADO POR DEFECTO. El .appex cambia la firma del IPA completo y usa
+    # xpc_shmem, que es API no publica: sin un Mac no se puede comprobar que
+    # enlace ni que la firma anidada sobreviva al sideload. Activar solo
+    # sabiendo que un appex mal firmado invalida la instalacion entera.
+    # Ver docs/RAM_EXTENSION_PLAN.md.
+    # ---------------------------------------------------------------------
+    option(NS3FB_MEM_EXTENSION
+        "Build the ns3fb-mem NSExtension (iOS RAM ceiling workaround, experimental)"
+        OFF)
+
+    if(NS3FB_MEM_EXTENSION)
+        message(STATUS "ns3fb-mem: construyendo la extension de memoria (experimental)")
+
+        # libxpc trae xpc_shmem_create/map, que son API no publica.
+        find_library(NS3FB_XPC_LIB xpc REQUIRED)
+
+        add_library(ns3fb-mem MODULE
+            platform/ios/memext/NS3FBMemExtension.mm
+        )
+        set_target_properties(ns3fb-mem PROPERTIES
+            BUNDLE TRUE
+            BUNDLE_EXTENSION appex
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/ios/memext/Info.plist"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "${NS3FB_BUNDLE_ID}.memext"
+            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${NS3FB_BUNDLE_ID}.memext"
+            XCODE_ATTRIBUTE_SKIP_INSTALL "YES"
+            PREFIX ""
+            OUTPUT_NAME "ns3fb-mem"
+            CXX_STANDARD 23
+        )
+        target_compile_definitions(ns3fb-mem PRIVATE
+            NS3FB_MEMEXT_SERVICE_NAME="${NS3FB_BUNDLE_ID}.memext")
+        target_link_libraries(ns3fb-mem PRIVATE
+            ${NS3FB_XPC_LIB}
+            "-framework Foundation"
+            "-framework UIKit"
+        )
+
+        # El app necesita el mismo nombre de servicio en su definicion.
+        target_compile_definitions(ns3fb PRIVATE
+            NS3FB_MEM_EXTENSION=1
+            NS3FB_MEMEXT_SERVICE_NAME="${NS3FB_BUNDLE_ID}.memext")
+
+        add_dependencies(ns3fb ns3fb-mem)
+        add_custom_command(TARGET ns3fb POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_CONTENT_DIR:ns3fb>/PlugIns"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "$<TARGET_BUNDLE_DIR:ns3fb-mem>"
+                "$<TARGET_BUNDLE_CONTENT_DIR:ns3fb>/PlugIns/ns3fb-mem.appex"
+            COMMENT "Embedding ns3fb-mem.appex into ns3fb.app/PlugIns"
             VERBATIM
         )
     endif()
