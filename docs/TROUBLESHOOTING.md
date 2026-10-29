@@ -30,6 +30,30 @@ el fallo es de firma, entitlements o dyld (mira la consola).
 - Hash del xex distinto.
 - `dyld: Library not loaded` → dylib sin firmar. Re-ejecuta `make-ipa.sh`.
 
+### 2b. La carpeta del juego aparece vacía (o el IPA es de ~20 MB)
+
+El `.ipa` **no lleva el juego**: son ~20 MB de código y librerías. Lo que el
+juego necesita (`default.xex`, `data/`, `datafb/`, ~7 GB) se copia a mano a
+`Documents`, que es la carpeta que se ve en la app Archivos.
+
+Desde el cambio de raíz del juego, la app **ya no exige que la carpeta se llame
+`game`**. Busca `default.xex` en este orden y usa la primera que lo tenga:
+
+1. `Documents/game`
+2. `Documents` (el propio `default.xex` suelto)
+3. Cualquier subcarpeta de `Documents` (p. ej. `Documents/Naruto .../`)
+4. Un nivel más dentro de esas (`Documents/Unzip/game/`)
+
+El log dice cuál eligió: `NS3FB-GAME raíz del juego: <ruta>`. Si no encuentra
+ninguna, escribe `NS3FB-GAME no encuentro default.xex (buscado en: ...)` y crea
+`Documents/game` vacía para no fallar en ese arranque — eso es lo que hace que
+parezca que "el juego se ha borrado solo".
+
+Ojo al reinstalar: si cambia la firma o el bundle ID, iOS da un **contenedor
+nuevo** y lo que hubiera en `Documents` se queda en el viejo. Si no quieres
+volver a copiar 7 GB cada vez, mete el juego en el propio `.ipa` con
+`scripts/inject-game-files.sh`.
+
 ### 3. "not enough free address space" al arrancar
 Es el entitlement `com.apple.developer.kernel.extended-virtual-addressing`. Sin
 él, el mapa de memoria del invitado (~4.5 GB contiguos) no cabe en un iPhone de
