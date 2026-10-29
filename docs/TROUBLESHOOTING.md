@@ -415,6 +415,32 @@ Palancas que sí se pueden usar sin recompilar:
 concreto salió negro por el shader: eso requiere capturar un frame en Xcode con
 Mac. Estas preguntas acotan el problema a un subsistema, no lo sustituyen.
 
+### 9c. Memoria: la extension `ns3fb-mem` (techo de RAM)
+
+En un iPhone de 3-4 GB el juego muere por jetsam sin que el log diga nada: iOS
+mata el proceso por `per-process-limit`, no por un fallo del port. El build trae
+una extension que le presta la RAM del invitado desde otro proceso (ver
+`docs/RAM_EXTENSION_PLAN.md`), pero **no se usa hasta que la activas**:
+
+```
+Documents/ramext_on.txt          -> arranca el donante y respalda los 512 MB
+Documents/ramext_keepdonors.txt  -> ademas deja vivos los donantes
+```
+
+Qué buscar en el log:
+
+| Línea | Significa |
+| --- | --- |
+| `NS3FB-RAM sin extension donante en este build` | El IPA se compiló con `-DNS3FB_MEM_EXTENSION=OFF` o el `.appex` no llegó a `PlugIns/` |
+| `NS3FB-RAM desactivado` | Falta el marcador; es el comportamiento normal |
+| `NS3FB-RAM no arrancó ningún donante` | iOS rechazó la petición (perfil de firma) o la extensión no conectó |
+| `NS3FB-RAM 512 MB de 512 MB ... footprint app X -> Y` | Funcionó: mira cuánto bajó `Y` respecto a `X` |
+| `NS3FB-RAM nada respaldado (...)` | Los donantes no dieron memoria; el juego sigue con la de siempre |
+
+Si el IPA **no instala** después de tocar esto, el sospechoso es la firma
+anidada del `.appex`: recompila con `-DNS3FB_MEM_EXTENSION=OFF` y compara.
+Todo el camino es reversible sin recompilar quitando el marcador.
+
 ## Cómo pedir ayuda
 
 En una issue incluye: modelo de iPhone, versión de iOS, el log `ns3fb_*.log` más
