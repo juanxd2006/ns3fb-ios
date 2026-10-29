@@ -37,11 +37,12 @@ extern "C" size_t xpc_shmem_map(xpc_object_t xpc_shmem, void** region);
 #include "NS3FBRamDonorProtocol.h"
 
 // mach/mach_vm.h es un "#error unsupported" en iOS, pero los entrypoints estan
-// en libsystem_kernel y se pueden declarar a mano. OJO: en un .mm hay que
-// declararlos con enlace C (extern "C"); sin eso el compilador los mangla como
-// C++ y el enlazado falla con "found '_mach_vm_allocate' ... declaration
-// possibly missing 'extern \"C\"'" (es lo mismo que hace MeloNX, cuyo
-extension es .m y por eso no lo necesita).
+// en libsystem_kernel y se pueden declarar a mano.
+//
+// OJO: en un .mm hay que declararlos con enlace C, dentro de un bloque
+// extern "C". Sin eso el compilador los mangla como C++ y el enlazado falla
+// con el aviso de 'declaration possibly missing extern C'. MeloNX no lo sufre
+// porque su donor es un .m (C puro), no un .mm.
 extern "C" {
 // Los tipos (vm_map_t, mach_vm_address_t...) son los mismos que usa la cabecera
 // real, asi que la declaracion coincide con la de Mach.
@@ -51,6 +52,9 @@ kern_return_t mach_vm_deallocate(vm_map_t target, mach_vm_address_t address,
                                  mach_vm_size_t size);
 }
 
+#ifndef VM_FLAGS_ANYWHERE
+#define VM_FLAGS_ANYWHERE 0x1
+#endif
 #ifndef VM_FLAGS_PURGABLE
 #define VM_FLAGS_PURGABLE 0x2
 #endif
