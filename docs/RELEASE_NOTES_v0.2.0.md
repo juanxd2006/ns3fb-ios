@@ -1,68 +1,67 @@
 # NS3FB iOS — v0.2.0
 
-Segunda entrega pública. **Solo correcciones**: no hay funciones nuevas, no cambia
-el rendimiento ni la resolución. Objetivo de la entrega: que el modo historia se
-pueda jugar de verdad.
+Second public build. **Bug fixes only**: no new features, no change to performance
+or resolution. The goal of this release is to make story mode actually playable.
 
-Base: iPhone 11 (A13), iOS 27, 960×540, ~30 fps estables.
+Baseline: iPhone 11 (A13), iOS 27, 960×540, solid ~30 fps.
 
 ---
 
-## 🐛 Corregido
+## 🐛 Fixed
 
-### 1. Modo historia: el personaje no se movía
+### 1. Story mode: the character would not move
 
-El juego llamaba por puntero a tres funciones que el codegen no conocía. Se
-ejecutaban como **no-op**, así que la comprobación de acción devolvía «no» y el
-personaje se quedaba clavado con el motor funcionando a 30 fps.
+The game called three functions through pointers that the codegen did not know
+about. They ran as **no-ops**, so the "can I act?" check returned *false* and the
+character stayed frozen while the engine kept drawing at 30 fps.
 
-| Dirección | Qué es |
+| Address | What it is |
 |---|---|
-| `0x821E82C8` | constructor de `ccAdvMobObj` (objetos del modo aventura) |
-| `0x825A73F8` | comprobación de si la acción se puede ejecutar |
-| `0x825A7378` | retorno de otra de esas comprobaciones |
+| `0x821E82C8` | constructor of `ccAdvMobObj` (adventure-mode objects) |
+| `0x825A73F8` | the action check that decides whether an action may run |
+| `0x825A7378` | the return stub of another one of those checks |
 
-Se sembraron en `ci/entrypoint_seeds.txt`, junto con **19 thunks de vtable** de
-16 bytes que tampoco estaban declarados. Resultado: el personaje vuelve a
-moverse y el juego deja de quedarse parado en el modo historia.
+They are now seeded in `ci/entrypoint_seeds.txt`, together with **19 vtable
+thunks** (16-byte virtual-call trampolines) that were also missing. Result: the
+character moves again and story mode no longer locks up.
 
-### 2. Crash al entrar en ciertas pantallas del modo historia
+### 2. Crash when entering certain story-mode screens
 
-Una build intermedia intentaba redirigir esas llamadas a la función que «parecía»
-contenerlas. Eligió una función que no tenía nada que ver y el juego murió con
+An intermediate build tried to redirect those calls to whichever function
+"seemed" to contain them. It picked an unrelated one and the game died with
 `Unhandled guest access violation: read of guest 0x00000004`.
 
-Se **desactivó por completo** ese detector. Ahora ninguna ruta del port puede
-redirigir una llamada a una función equivocada: si algo no se resuelve, se
-ejecuta como no-op y el juego sigue, en vez de morir.
+That redirector is now **disabled entirely**. No code path in the port can send a
+call to the wrong function any more: if something cannot be resolved it runs as a
+no-op and the game keeps going, instead of crashing.
 
-### 3. Cuatro ramas condicionales sin resolver en el codegen
+### 3. Four unresolved conditional branches at codegen time
 
-El propio codegen las listaba al recompilar:
+The codegen itself listed them while recompiling:
 
 ```
 Unresolved conditional branch to 0x82261E40, 0x82296DF0, 0x82353E10, 0x827D5CBC
 ```
 
-Las cuatro eran código interior de funciones que el analizador no había
-descubierto. Se sembró el **inicio real** de cada una:
+All four were interior code of functions the analyser never discovered. The real
+function start of each was seeded instead:
 
-| Destino | Función sembrada |
+| Target | Function seeded |
 |---|---|
 | `0x82261E40` | `0x82261BA0` |
 | `0x82296DF0` | `0x82296C68` |
 | `0x82353E10` | `0x82353D90` |
 | `0x827D5CBC` | `0x827D5BD8` |
 
-### 4. `setjmp` / `longjmp` declarados en el manifiesto
+### 4. `setjmp` / `longjmp` declared in the manifest
 
-El proyecto no los declaraba, y sin ellos el codegen compila `longjmp` como una
-llamada normal que retorna: el epílogo ya lo omitió el compilador, así que `r1` y
-los registros callee-saved quedan corruptos.
+The project never declared them. Without them the codegen compiles `longjmp` as
+an ordinary call that returns — but the compiler already omitted the epilogue, so
+`r1` and the callee-saved registers end up corrupted.
 
-Se identificó la pareja del CRT por su firma (guardan y restauran los no
-volátiles con **el mismo reparto de offsets**) y `scripts/02b-set-jumptargets.py`
-las escribe en cada build:
+The CRT pair was identified by its signature (they save and restore the
+non-volatiles using **the exact same slot layout**) and
+`scripts/02b-set-jumptargets.py` writes them on every build:
 
 ```toml
 [entrypoint]
@@ -70,69 +69,69 @@ setjmp_address  = 0x828A7F20
 longjmp_address = 0x828A81F0
 ```
 
-> Nota honesta: esto elimina una clase de corrupción, pero **no** arregla el bug
-> del combo que se describe abajo. Se verificó con datos.
+> Honest note: this removes a whole class of corruption, but it does **not** fix
+> the combo bug described below. That was verified with measurements.
 
 ---
 
-## ⚠️ Conocido: el combo de mob battle no avanza
+## ⚠️ Known issue: the mob-battle combo does not advance
 
-En las **mob battles** (varias oleadas de enemigos) aparece en pantalla un botón
-—`A`, `B`…— que hay que pulsar para encadenar el ataque especial. En este port el
-prompt **se queda ahí y no avanza**.
+In **mob battles** (multi-wave fights) the game shows a button on screen — `A`,
+`B`… — that you have to press to chain the special attack. In this port the
+prompt **stays there and never advances**.
 
-Lo que ya está descartado, con mediciones del propio juego:
+What has already been ruled out, using measurements from the game itself:
 
-| Comprobación | Resultado |
+| Check | Result |
 |---|---|
-| ¿Llega la pulsación al juego? | **Sí**: 260 pulsaciones de `B` vistas por el invitado |
-| ¿La lógica corre más rápido que la imagen? | **No**: 30,0 frames/s de lógica y 30,0 de presentación |
-| ¿Se pierden eventos de botón? | El juego sondea estado; no usa eventos, y el estado llega |
-| ¿Es un entrypoint que falta? | Los traps son fragmentos de epílogo, no funciones |
+| Does the press reach the game? | **Yes**: 260 presses of `B` seen by the guest |
+| Does logic run faster than the image? | **No**: 30.0 logic frames/s vs 30.0 presented |
+| Are button events being dropped? | The game polls state, it does not use events, and state arrives |
+| Is it a missing entrypoint? | The traps are epilogue fragments, not functions |
 
-Síntoma asociado: el logro de capítulo se dispara **varias veces seguidas**, lo
-que apunta a una secuencia que se reejecuta en bucle. Se sigue investigando.
+Related symptom: the chapter achievement fires **several times in a row**, which
+points at a sequence being re-executed in a loop. Still under investigation.
 
 ---
 
-## 🔧 Diagnóstico que se queda en el build
+## 🔧 Diagnostics that stay in the build
 
-Útil para reportar bugs, y **no molesta**: 2–3 líneas por segundo.
+Useful when reporting bugs, and **not noisy**: 2–3 lines per second.
 
 ```
-NS3FB-BUILD compilado <fecha> <hora>        qué binario generó el log
-NS3FB-INPUT keydown vk=0x5801 flags=0x0001  pulsaciones que llegan al invitado
-NS3FB-INPUT-FRAMES polls=30.0/s ...         tasa de sondeo del mando
-NS3FB-GUEST-FRAMES swaps=30.0/s ...         frames que pide el juego
+NS3FB-BUILD compiled <date> <time>          which binary produced the log
+NS3FB-INPUT keydown vk=0x5801 flags=0x0001  presses that reach the guest
+NS3FB-INPUT-FRAMES polls=30.0/s ...         how often the game polls the pad
+NS3FB-GUEST-FRAMES swaps=30.0/s ...         frames the game asks to present
 ```
 
-Para silenciarlo: crear `Documents/input_trace_off.txt` y reabrir el juego.
+To silence it: create `Documents/input_trace_off.txt` and relaunch the game.
 
 ---
 
-## 📦 Instalación
+## 📦 Installing
 
-Igual que siempre: `.ipa` **sin firmar**, se firma con SideStore, AltStore,
-Sideloadly o certificado propio. Requisitos y pasos en el
-[README](../README.es.md). Necesitas tu propio `default.xex` NTSC-U
-(SHA-1 `f7ad65e2…55e9f`); si el hash no coincide, el port no arranca.
+Same as before: **unsigned** `.ipa`, signed with SideStore, AltStore, Sideloadly
+or your own certificate. Requirements and steps in the [README](README.md). You
+must supply your own NTSC-U `default.xex` (SHA-1 `f7ad65e2…55e9f`) — if the hash
+does not match, the port will not boot.
 
-**Cambiar de versión requiere desinstalar antes de reinstalar** si el icono o el
-bundle ID cambian de caché en iOS.
+**When changing version, uninstall before reinstalling** so iOS does not keep the
+cached icon.
 
 ---
 
-## Estado general
+## Overall status
 
-| Parte | Estado |
+| Part | Status |
 |---|---|
-| Arranque, menús, selección de personaje | ✅ |
-| VS Battle, práctica, HUD, partículas, audio | ✅ |
-| Modo historia (movimiento, eventos, capítulos) | ✅ |
-| **Combo de mob battle** | ⚠️ pendiente |
-| 1280×720 | ❌ ~18 fps — techo del SDK |
-| 60 fps | ❌ el juego está bloqueado a 30 por diseño |
+| Boot, menus, character select | ✅ |
+| VS Battle, practice, HUD, particles, audio | ✅ |
+| Story mode (movement, events, chapters) | ✅ |
+| **Mob-battle combo** | ⚠️ pending |
+| 1280×720 | ❌ ~18 fps — SDK ceiling |
+| 60 fps | ❌ the game is frame-locked at 30 by design |
 
-Historial técnico completo de estos arreglos en
-[`docs/INTERIOR_ENTRIES.md`](INTERIOR_ENTRIES.md) y
+Full technical history of these fixes in
+[`docs/INTERIOR_ENTRIES.md`](INTERIOR_ENTRIES.md) and
 [`docs/INPUT_TRACE.md`](INPUT_TRACE.md).
