@@ -56,6 +56,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(ns3fb PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/platform/ios/memext)
     target_link_libraries(ns3fb PRIVATE "-framework Foundation")
+    # libxpc: xpc_* y xpc_shmem_* viven ahi. En iOS no siempre se resuelven por
+    # venir Foundation, asi que se enlaza explicitamente si el SDK la expone.
+    find_library(NS3FB_XPC_LIBRARY xpc)
+    if(NS3FB_XPC_LIBRARY)
+        target_link_libraries(ns3fb PRIVATE ${NS3FB_XPC_LIBRARY})
+    endif()
 endif()
 
 # ns3fb_register.cpp is a flat table of tens of thousands of function-pointer
@@ -154,6 +160,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # La extension no enlaza nada del SDK: Foundation (NSXPC*) y libxpc
         # (que ya viene con libSystem).
         target_link_libraries(ns3fb-mem PRIVATE "-framework Foundation")
+        if(NS3FB_XPC_LIBRARY)
+            target_link_libraries(ns3fb-mem PRIVATE ${NS3FB_XPC_LIBRARY})
+        endif()
 
         # iOS solo carga extensiones desde <app>/PlugIns, y valida la firma
         # anidada del bundle completo: se copia el .appex, no el binario suelto.
