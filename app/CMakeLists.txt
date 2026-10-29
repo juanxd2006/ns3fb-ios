@@ -11,6 +11,17 @@ project(ns3fb LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# El puente con NSExtension/xpc_shmem es Objective-C++ (.mm). Solo en iOS: en
+# macOS el target no compila esos ficheros y no hace falta el lenguaje.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    enable_language(OBJCXX)
+endif()
+
+# Extension de memoria (RAM limit workaround). ON por defecto: la app solo la usa
+# si existe el marcador Documents/ramext_on.txt, asi que empaquetarla no cambia
+# el comportamiento. -DNS3FB_MEM_EXTENSION=OFF compila sin ella.
+option(NS3FB_MEM_EXTENSION "Empaquetar la extension ns3fb-mem (NSExtension + xpc_shmem)" ON)
+
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/game/default.xex")
     message(FATAL_ERROR
         "game/default.xex not found.\n"
@@ -31,7 +42,21 @@ set(NS3FB_SOURCES
     src/main.cpp
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    list(APPEND NS3FB_SOURCES src/ios/ns3fb_ram_donor.mm)
+endif()
+
 add_executable(ns3fb ${NS3FB_SOURCES})
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # ARC obligatorio: el codigo del donante usa __weak y xpc_object_t como
+    # puntero ObjC. -fapplication-extension solo aplica al .appex, no aqui.
+    set_source_files_properties(src/ios/ns3fb_ram_donor.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
+    target_include_directories(ns3fb PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform/ios/memext)
+    target_link_libraries(ns3fb PRIVATE "-framework Foundation")
+endif()
 
 # ns3fb_register.cpp is a flat table of tens of thousands of function-pointer
 # registrations with no control flow worth optimising, but -O3 spends over ten
@@ -96,5 +121,53 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             COMMENT "Copying app icons into ns3fb.app"
             VERBATIM
         )
+    endif()
+
+    # -----------------------------------------------------------------------
+    # Extension de memoria: "RAM limit workaround" (docs/RAM_EXTENSION_PLAN.md)
+    #
+    # Un .appex con su propio proceso y su propio presupuesto de jetsam que
+    # reserva la RAM del invitado y se la pasa a la app por xpc_shmem. Ver
+    # platform/ios/memext/README.md.
+    #
+    # -DNS3FB_MEM_EXTENSION=OFF compila sin ella: sirve para saber si un fallo
+    # de instalacion viene de la firma anidada del .appex o del resto del IPA.
+    # Aunque vaya empaquetada, la app NO la usa si no existe
+    # Documents/ramext_on.txt, asi que el comportamiento por defecto no cambia.
+    # -----------------------------------------------------------------------
+    if(NS3FB_MEM_EXTENSION)
+        add_library(ns3fb-mem MODULE
+            platform/ios/memext/NS3FBMemExtension.mm
+        )
+        set_target_properties(ns3fb-mem PROPERTIES
+            OUTPUT_NAME "ns3fb-mem"
+            BUNDLE TRUE
+            BUNDLE_EXTENSION "appex"
+            MACOSX_BUNDLE_INFO_PLIST
+                "${CMAKE_CURRENT_SOURCE_DIR}/platform/ios/memext/Info.plist"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "${NS3FB_BUNDLE_ID}.mem"
+            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${NS3FB_BUNDLE_ID}.mem"
+            XCODE_ATTRIBUTE_SKIP_INSTALL "YES"
+        )
+        target_include_directories(ns3fb-mem PRIVATE platform/ios/memext)
+        target_compile_options(ns3fb-mem PRIVATE -fobjc-arc -fapplication-extension)
+        # La extension no enlaza nada del SDK: Foundation (NSXPC*) y libxpc
+        # (que ya viene con libSystem).
+        target_link_libraries(ns3fb-mem PRIVATE "-framework Foundation")
+
+        # iOS solo carga extensiones desde <app>/PlugIns, y valida la firma
+        # anidada del bundle completo: se copia el .appex, no el binario suelto.
+        add_dependencies(ns3fb ns3fb-mem)
+        add_custom_command(TARGET ns3fb POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_CONTENT_DIR:ns3fb>/PlugIns"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "$<TARGET_BUNDLE_DIR:ns3fb-mem>"
+                "$<TARGET_BUNDLE_CONTENT_DIR:ns3fb>/PlugIns/ns3fb-mem.appex"
+            COMMENT "Empaquetando ns3fb-mem.appex en ns3fb.app/PlugIns"
+            VERBATIM
+        )
+    else()
+        message(STATUS "NS3FB_MEM_EXTENSION=OFF: el IPA sale sin extension de memoria")
     endif()
 endif()
