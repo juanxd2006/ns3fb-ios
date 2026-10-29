@@ -22,6 +22,8 @@
 #include <rex/cvar.h>
 #include <rex/cvar_defaults.h>
 #include <rex/logging.h>
+#include <rex/system/xmemory.h>
+#include "ios/ns3fb_ram_donor.h"
 #else
 #define NS3FB_IOS 0
 #endif
@@ -437,6 +439,75 @@ class Ns3fbApp : public rex::ReXApp {
         // Los dos overrides de diagnostico: si no son 1, los marcadores no se
         // aplicaron y el build no sirve para decidir nada.
         q_b("ztest_off"), q_b("blend_off"), q_b("ns3fb_diag"));
+
+    // Lo ultimo: sustituir la RAM del invitado por memoria de la extension.
+    // Va despues del volcado para que el log diga primero con que cvars se
+    // arranca y luego que hizo el donante.
+    InstallRamDonor();
+  }
+
+  // Extension de memoria: "RAM limit workaround" (docs/RAM_EXTENSION_PLAN.md).
+  //
+  // Se llama desde OnPreLaunchModule porque es el primer punto en el que el
+  // runtime ya tiene Memory inicializada (las vistas del invitado mapeadas) y
+  // el hilo del invitado todavia no ha arrancado: recolocar las vistas fisicas
+  // aqui es lo mas pronto posible y no pisa nada del juego.
+  //
+  // Apagado por defecto: solo se activa creando Documents/ramext_on.txt, para
+  // poder comparar el mismo build con y sin donante. Si algo falla (no hay
+  // extension, iOS la rechaza, reserva menos de lo pedido) se queda con el
+  // mapeo respaldado por fichero y el juego arranca igual.
+  void InstallRamDonor() {
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) {
+      return;
+    }
+    const std::filesystem::path documents = std::filesystem::path(home) / "Documents";
+    std::error_code ec;
+
+    if (!ns3fb_ram_donor_is_available()) {
+      REXLOG_INFO("NS3FB-RAM sin extension donante en este build (PlugIns/ vacio)");
+      return;
+    }
+    if (!std::filesystem::exists(documents / "ramext_on.txt", ec)) {
+      REXLOG_INFO("NS3FB-RAM desactivado (crea Documents/ramext_on.txt para probarlo)");
+      return;
+    }
+    // Por defecto los donantes se matan despues de mapear: las paginas ya estan
+    // en la app y asi iOS no los mata por su cuenta a mitad de partida. Este
+    // marcador los deja vivos para poder medir su footprint.
+    if (std::filesystem::exists(documents / "ramext_keepdonors.txt", ec)) {
+      REXLOG_INFO("NS3FB-RAM marcador ramext_keepdonors.txt: los donantes siguen vivos");
+      ns3fb_ram_donor_set_kill_after_mapping(false);
+    }
+
+    auto* memory = runtime() ? runtime()->memory() : nullptr;
+    if (!memory || !memory->virtual_membase()) {
+      REXLOG_WARN("NS3FB-RAM la memoria del invitado no esta lista; se omite");
+      return;
+    }
+
+    const uint64_t footprint_before = ns3fb_ram_donor_phys_footprint();
+    if (ns3fb_ram_donor_start(1, 10.0) == 0) {
+      REXLOG_WARN("NS3FB-RAM no arranco ningun donante: {}", ns3fb_ram_donor_last_error());
+      return;
+    }
+
+    // 0x20000000 = los 512 MB del heap fisico del invitado (heaps_.physical en
+    // el SDK). Todo lo que no se cubra se queda con el mapeo de fichero, que
+    // sigue siendo valido.
+    const uint64_t donated =
+        ns3fb_ram_donor_back_guest_ram(reinterpret_cast<uint8_t*>(memory->virtual_membase()),
+                                       0x20000000ull);
+    if (donated == 0) {
+      REXLOG_WARN("NS3FB-RAM nada respaldado ({}); se sigue con la memoria normal",
+                  ns3fb_ram_donor_last_error());
+      return;
+    }
+
+    REXLOG_INFO("NS3FB-RAM {} MB del invitado viven en la extension; footprint {} MB -> {} MB",
+                donated / (1024 * 1024), footprint_before / (1024 * 1024),
+                ns3fb_ram_donor_phys_footprint() / (1024 * 1024));
   }
 #endif
 };
