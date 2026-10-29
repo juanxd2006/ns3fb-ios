@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>es</string>
+	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>NS3FB Mem</string>
 	<key>CFBundleExecutable</key>
@@ -17,14 +17,23 @@
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
+	<!-- El app se conecta por mach a este nombre. Lo inyecta CMake en
+	     NS3FB_MEMEXT_SERVICE_NAME para que coincida exactamente. -->
+	<key>NSXPCListener</key>
+	<dict>
+		<key>MachServices</key>
+		<dict>
+			<key>$(PRODUCT_BUNDLE_IDENTIFIER)</key>
+			<true/>
+		</dict>
+	</dict>
 	<key>NSExtension</key>
 	<dict>
-		<!-- Share Extension: es el unico punto que iOS arranca bajo demanda desde
-		     el propio app sin intervencion del usuario, y el que se usa en los
-		     ports que aplican esta tecnica. -->
+		<!-- Share Extension: punto que iOS arranca bajo demanda desde el propio
+		     app sin intervencion del usuario. -->
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>
 		<key>NSExtensionPrincipalClass</key>
